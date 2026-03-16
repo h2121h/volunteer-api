@@ -31,6 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+<<<<<<< HEAD
 
 def get_db():
     db = SessionLocal()
@@ -42,6 +43,8 @@ def get_db():
 
 # ========== ПУБЛИЧНЫЕ ЭНДПОИНТЫ (доступны всем) ==========
 
+=======
+>>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c
 @app.get("/")
 def root():
     return {"message": "Волонтёрское API работает", "version": "1.0.0"}
@@ -226,6 +229,7 @@ def get_current_user_info(current_user: models.User = Depends(get_current_active
 
 # ========== ЭНДПОИНТЫ ДЛЯ ВОЛОНТЁРОВ ==========
 
+<<<<<<< HEAD
 @app.post("/api/tasks/{task_id}/apply")
 def apply_to_task(
         task_id: int,
@@ -733,3 +737,8 @@ def admin_stats(
 @app.get("/api/health")
 def health():
     return {"status": "healthy"}
+=======
+@app.post("/api/tasks/{task_id}/join")
+def join_task(task_id: int):
+    return {"success": True, "message": "Вы успешно записались на задачу!"}
+>>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c

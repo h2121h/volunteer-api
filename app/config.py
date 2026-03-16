@@ -6,7 +6,6 @@ load_dotenv()
 
 
 class Settings(BaseSettings):
-    # Используйте вашу существующую БД
     DATABASE_URL: str = "postgresql://username:password@localhost:5432/volunteer_db"
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM: str = "HS256"

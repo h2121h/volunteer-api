@@ -21,8 +21,13 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 
+<<<<<<< HEAD
 def authenticate_user(db: Session, email: str, password: str):
     user = db.query(models.User).filter(models.User.email == email).first()
+=======
+def authenticate_user(db: Session, username: str, password: str):
+    user = db.query(models.User).filter(models.User.email == username).first()
+>>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c
     if not user or not verify_password(password, user.password_hash):
         return False
     return user
@@ -47,9 +52,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+<<<<<<< HEAD
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
+=======
+        email: str = payload.get("sub") 
+        if email is None:
+            raise credentials_exception
+        token_data = schemas.TokenData(username=email) 
+>>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c
     except JWTError:
         raise credentials_exception
 
@@ -61,6 +73,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 
 async def get_current_active_user(current_user: models.User = Depends(get_current_user)):
     if not current_user.is_active:
+<<<<<<< HEAD
         raise HTTPException(status_code=400, detail="Неактивный пользователь")
     return current_user
 
@@ -112,3 +125,7 @@ def admin_required(current_user: models.User = Depends(get_current_active_user))
     if current_user.role.code != "admin":
         raise HTTPException(status_code=403, detail="Требуется роль администратора")
     return current_user
+=======
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+>>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c

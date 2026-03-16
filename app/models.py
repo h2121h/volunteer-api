@@ -3,7 +3,6 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 
-# Таблица для связи многие-ко-многим (пользователи-навыки)
 user_skills = Table(
     'user_skills',
     Base.metadata,
@@ -22,9 +21,12 @@ class User(Base):
     role_id = Column(Integer, ForeignKey('roles.id'))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Связи
     role = relationship("Role", back_populates="users")
     skills = relationship("Skill", secondary=user_skills, back_populates="users")
+<<<<<<< HEAD
+=======
+
+>>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c
     tasks_created = relationship("Task", foreign_keys="Task.created_by", back_populates="creator")
     task_applications = relationship("TaskApplication", foreign_keys="TaskApplication.user_id", back_populates="user")
     task_assignments = relationship("TaskAssignment", foreign_keys="TaskAssignment.user_id", back_populates="user")
@@ -144,4 +146,8 @@ class VolunteerDocument(Base):
     verified_by = Column(Integer, ForeignKey('users.id'), nullable=True)
 
     user = relationship("User", foreign_keys=[user_id], back_populates="documents")
+<<<<<<< HEAD
     verifier = relationship("User", foreign_keys=[verified_by])
+=======
+    verifier = relationship("User", foreign_keys=[verified_by], primaryjoin="User.id == VolunteerDocument.verified_by")
+>>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c
