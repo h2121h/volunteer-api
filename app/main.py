@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Volunteer API")
 
-# Разрешаем запросы с любого источника
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -11,8 +10,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ========== ПРОСТЫЕ ТЕСТОВЫЕ ЭНДПОИНТЫ ==========
 
 @app.get("/")
 def root():
