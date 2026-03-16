@@ -23,10 +23,6 @@ class User(Base):
 
     role = relationship("Role", back_populates="users")
     skills = relationship("Skill", secondary=user_skills, back_populates="users")
-<<<<<<< HEAD
-=======
-
->>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c
     tasks_created = relationship("Task", foreign_keys="Task.created_by", back_populates="creator")
     task_applications = relationship("TaskApplication", foreign_keys="TaskApplication.user_id", back_populates="user")
     task_assignments = relationship("TaskAssignment", foreign_keys="TaskAssignment.user_id", back_populates="user")
@@ -37,8 +33,8 @@ class Role(Base):
     __tablename__ = "roles"
 
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String, unique=True, nullable=False)  # volunteer, organizer, curator, admin
-    name = Column(String, unique=True, nullable=False)  # Волонтёр, Организатор, Куратор, Администратор
+    code = Column(String, unique=True, nullable=False)
+    name = Column(String, unique=True, nullable=False)
 
     users = relationship("User", back_populates="role")
 
@@ -49,7 +45,7 @@ class Skill(Base):
     name = Column(String, unique=True, nullable=False)
     category = Column(String)
 
-    users = relationship("User", secondary=user_skills, back_populates="skills")
+    users = relationship("User", secondary=user_skills, back_populates="users")
 
 class Project(Base):
     __tablename__ = "projects"
@@ -75,7 +71,7 @@ class Task(Base):
     project_id = Column(Integer, ForeignKey('projects.id'))
     location = Column(String)
     required_skills = Column(String)
-    status = Column(String, default="open")  # open, in_progress, completed, cancelled
+    status = Column(String, default="open")
     priority = Column(String, default="medium")
     start_date = Column(DateTime)
     end_date = Column(DateTime)
@@ -94,7 +90,7 @@ class TaskApplication(Base):
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey('tasks.id'))
     user_id = Column(Integer, ForeignKey('users.id'))
-    status = Column(String, default="pending")  # pending, approved, rejected
+    status = Column(String, default="pending")
     message = Column(Text)
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -124,7 +120,7 @@ class TaskReport(Base):
     content = Column(Text, nullable=False)
     hours_spent = Column(Float)
     photos = Column(String)
-    status = Column(String, default="submitted")  # submitted, approved, rejected
+    status = Column(String, default="submitted")
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     reviewed_by = Column(Integer, ForeignKey('users.id'), nullable=True)
@@ -146,8 +142,4 @@ class VolunteerDocument(Base):
     verified_by = Column(Integer, ForeignKey('users.id'), nullable=True)
 
     user = relationship("User", foreign_keys=[user_id], back_populates="documents")
-<<<<<<< HEAD
     verifier = relationship("User", foreign_keys=[verified_by])
-=======
-    verifier = relationship("User", foreign_keys=[verified_by], primaryjoin="User.id == VolunteerDocument.verified_by")
->>>>>>> b8d686ea9f8dbec9dd58be56eb7d10924e958c6c
