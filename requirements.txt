@@ -2,11 +2,7 @@ fastapi==0.115.11
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.39
 python-dotenv==1.1.0
-<<<<<<< HEAD
-pydantic==2.10.6
-=======
-pydantic==2.10.6        
->>>>>>> 7cf5229e09b4fd986ca583f7ac0460b113df7b0c
+pydantic==2.11.3
 pydantic-settings==2.8.1
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.4.0
@@ -15,8 +11,4 @@ alembic==1.15.2
 email-validator==2.2.0
 bcrypt==4.3.0
 cryptography==44.0.2
-<<<<<<< HEAD
 psycopg2-binary==2.9.10
-=======
-psycopg2-binary==2.9.10  
->>>>>>> 7cf5229e09b4fd986ca583f7ac0460b113df7b0c
