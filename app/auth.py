@@ -22,7 +22,6 @@ def get_password_hash(password):
 
 
 def authenticate_user(db: Session, username: str, password: str):
-    # Используем email вместо username
     user = db.query(models.User).filter(models.User.email == username).first()
     if not user or not verify_password(password, user.password_hash):
         return False
@@ -48,10 +47,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        email: str = payload.get("sub")  # Используем email вместо username
+        email: str = payload.get("sub") 
         if email is None:
             raise credentials_exception
-        token_data = schemas.TokenData(username=email)  # username в схеме оставляем для совместимости
+        token_data = schemas.TokenData(username=email) 
     except JWTError:
         raise credentials_exception
 
