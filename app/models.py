@@ -17,16 +17,14 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
+    full_name = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     role_id = Column(Integer, ForeignKey('roles.id'))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    # ⚠️ ПОЛЯ username, full_name И updated_at УДАЛЕНЫ - их нет в вашей БД
 
     # Связи
     role = relationship("Role", back_populates="users")
     skills = relationship("Skill", secondary=user_skills, back_populates="users")
-
-    # Явно указываем foreign_keys для всех связей
     tasks_created = relationship("Task", foreign_keys="Task.created_by", back_populates="creator")
     task_applications = relationship("TaskApplication", foreign_keys="TaskApplication.user_id", back_populates="user")
     task_assignments = relationship("TaskAssignment", foreign_keys="TaskAssignment.user_id", back_populates="user")
@@ -37,8 +35,8 @@ class Role(Base):
     __tablename__ = "roles"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
-    description = Column(String)
+    code = Column(String, unique=True, nullable=False)  # volunteer, organizer, curator, admin
+    name = Column(String, unique=True, nullable=False)  # Волонтёр, Организатор, Куратор, Администратор
 
     users = relationship("User", back_populates="role")
 
@@ -75,7 +73,7 @@ class Task(Base):
     project_id = Column(Integer, ForeignKey('projects.id'))
     location = Column(String)
     required_skills = Column(String)
-    status = Column(String, default="open")
+    status = Column(String, default="open")  # open, in_progress, completed, cancelled
     priority = Column(String, default="medium")
     start_date = Column(DateTime)
     end_date = Column(DateTime)
@@ -94,7 +92,7 @@ class TaskApplication(Base):
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey('tasks.id'))
     user_id = Column(Integer, ForeignKey('users.id'))
-    status = Column(String, default="pending")
+    status = Column(String, default="pending")  # pending, approved, rejected
     message = Column(Text)
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -113,7 +111,7 @@ class TaskAssignment(Base):
 
     task = relationship("Task", foreign_keys=[task_id], back_populates="assignments")
     user = relationship("User", foreign_keys=[user_id], back_populates="task_assignments")
-    assigner = relationship("User", foreign_keys=[assigned_by], primaryjoin="User.id == TaskAssignment.assigned_by")
+    assigner = relationship("User", foreign_keys=[assigned_by])
 
 class TaskReport(Base):
     __tablename__ = "task_reports"
@@ -124,14 +122,14 @@ class TaskReport(Base):
     content = Column(Text, nullable=False)
     hours_spent = Column(Float)
     photos = Column(String)
-    status = Column(String, default="submitted")
+    status = Column(String, default="submitted")  # submitted, approved, rejected
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
     reviewed_at = Column(DateTime(timezone=True), nullable=True)
     reviewed_by = Column(Integer, ForeignKey('users.id'), nullable=True)
 
     task = relationship("Task", foreign_keys=[task_id], back_populates="reports")
     user = relationship("User", foreign_keys=[user_id], back_populates="reports")
-    reviewer = relationship("User", foreign_keys=[reviewed_by], primaryjoin="User.id == TaskReport.reviewed_by")
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
 
 class VolunteerDocument(Base):
     __tablename__ = "volunteer_documents"
@@ -146,4 +144,4 @@ class VolunteerDocument(Base):
     verified_by = Column(Integer, ForeignKey('users.id'), nullable=True)
 
     user = relationship("User", foreign_keys=[user_id], back_populates="documents")
-    verifier = relationship("User", foreign_keys=[verified_by], primaryjoin="User.id == VolunteerDocument.verified_by")
+    verifier = relationship("User", foreign_keys=[verified_by])
