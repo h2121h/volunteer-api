@@ -143,3 +143,16 @@ class VolunteerDocument(Base):
 
     user = relationship("User", foreign_keys=[user_id], back_populates="documents")
     verifier = relationship("User", foreign_keys=[verified_by])
+
+class ProjectFeedback(Base):
+    __tablename__ = "project_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    user_id = Column(Integer, ForeignKey('users.id'))
+    rating = Column(Integer)
+    comment = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    project = relationship("Project")
+    user = relationship("User")

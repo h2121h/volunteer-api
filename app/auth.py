@@ -90,3 +90,13 @@ def admin_required(current_user: models.User = Depends(get_current_active_user))
     if current_user.role.code != "admin":
         raise HTTPException(status_code=403, detail="Требуется роль администратора")
     return current_user
+
+def decode_token(token: str):
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+def get_user_by_email(db: Session, email: str):
+    return db.query(models.User).filter(models.User.email == email).first()

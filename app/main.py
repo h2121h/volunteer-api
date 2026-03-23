@@ -1,17 +1,11 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session
-from typing import List, Optional
-from datetime import datetime
 from app.database import SessionLocal, engine
 from app import models
-from app.auth import (
-    get_password_hash, verify_password, create_access_token,
-    get_current_user, get_current_active_user,
-    volunteer_required, organizer_required, curator_required, admin_required,
-    authenticate_user
-)
 from app.config import settings
+
+# Импортируем роутеры
+from app.routers import auth, documents, analytics, projects, reports
 
 app = FastAPI(
     title="Волонтёрское API",
@@ -26,6 +20,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth.router)
+app.include_router(documents.router)
+app.include_router(analytics.router)
+app.include_router(projects.router)
+app.include_router(reports.router)
+
+@app.get("/")
+def root():
+    return {"message": "Волонтёрское API работает", "version": "1.0.0"}
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
 
 def get_db():
     db = SessionLocal()
@@ -55,11 +63,11 @@ def get_stats(db: Session = Depends(get_db)):
     volunteers = db.query(models.User).join(models.Role).filter(models.Role.code == "volunteer").count()
     organizers = db.query(models.User).join(models.Role).filter(models.Role.code == "organizer").count()
     curators = db.query(models.User).join(models.Role).filter(models.Role.code == "curator").count()
-    
+
     tasks_open = db.query(models.Task).filter(models.Task.status == "open").count()
     tasks_completed = db.query(models.Task).filter(models.Task.status == "completed").count()
     projects_count = db.query(models.Project).count()
-    
+
     return {
         "volunteers_count": volunteers,
         "organizers_count": organizers,
@@ -90,7 +98,7 @@ def get_tasks(
     query = db.query(models.Task)
     if status:
         query = query.filter(models.Task.status == status)
-    
+
     tasks = query.all()
     result = []
     for task in tasks:
@@ -114,14 +122,14 @@ def register(data: dict, db: Session = Depends(get_db)):
         password = data.get("password")
         full_name = data.get("full_name", "")
         role_code = data.get("role", "volunteer")
-        
+
         if not email or not password:
             return {"success": False, "message": "Email и пароль обязательны"}
-        
+
         existing_user = db.query(models.User).filter(models.User.email == email).first()
         if existing_user:
             return {"success": False, "message": "Пользователь уже существует"}
-        
+
         role = db.query(models.Role).filter(models.Role.code == role_code).first()
         if not role:
             available_roles = db.query(models.Role).all()
@@ -130,7 +138,7 @@ def register(data: dict, db: Session = Depends(get_db)):
                 "message": f"Роль '{role_code}' не существует",
                 "available_roles": [r.code for r in available_roles]
             }
-        
+
         hashed_password = get_password_hash(password)
         new_user = models.User(
             email=email,
@@ -139,11 +147,11 @@ def register(data: dict, db: Session = Depends(get_db)):
             role_id=role.id,
             is_active=True
         )
-        
+
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        
+
         return {
             "success": True,
             "message": "Регистрация успешна",
@@ -153,7 +161,7 @@ def register(data: dict, db: Session = Depends(get_db)):
                 "role": new_user.role.code
             }
         }
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -162,14 +170,14 @@ def login(data: dict, db: Session = Depends(get_db)):
     try:
         email = data.get("email")
         password = data.get("password")
-        
+
         user = authenticate_user(db, email, password)
-        
+
         if not user:
             return {"success": False, "message": "Неверный email или пароль"}
-        
+
         access_token = create_access_token(data={"sub": user.email})
-        
+
         return {
             "success": True,
             "message": "Вход выполнен успешно",
@@ -182,7 +190,7 @@ def login(data: dict, db: Session = Depends(get_db)):
                 "role_name": user.role.name
             }
         }
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -209,27 +217,27 @@ def apply_to_task(
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
         if not task:
             return {"success": False, "message": "Задача не найдена"}
-        
+
         existing = db.query(models.TaskApplication).filter(
             models.TaskApplication.task_id == task_id,
             models.TaskApplication.user_id == current_user.id
         ).first()
-        
+
         if existing:
             return {"success": False, "message": "Вы уже подали заявку на эту задачу"}
-        
+
         application = models.TaskApplication(
             task_id=task_id,
             user_id=current_user.id,
             message=message,
             status="pending"
         )
-        
+
         db.add(application)
         db.commit()
-        
+
         return {"success": True, "message": "Заявка отправлена"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -241,7 +249,7 @@ def get_my_applications(
     applications = db.query(models.TaskApplication).filter(
         models.TaskApplication.user_id == current_user.id
     ).all()
-    
+
     return [
         {
             "id": a.id,
@@ -265,18 +273,18 @@ def create_report(
         content = data.get("content")
         hours_spent = data.get("hours_spent")
         photos = data.get("photos")
-        
+
         if not task_id or not content:
             return {"success": False, "message": "Необходимо указать задачу и содержание отчёта"}
-        
+
         assignment = db.query(models.TaskAssignment).filter(
             models.TaskAssignment.task_id == task_id,
             models.TaskAssignment.user_id == current_user.id
         ).first()
-        
+
         if not assignment:
             return {"success": False, "message": "Эта задача не назначена вам"}
-        
+
         report = models.TaskReport(
             task_id=task_id,
             user_id=current_user.id,
@@ -285,12 +293,12 @@ def create_report(
             photos=photos,
             status="submitted"
         )
-        
+
         db.add(report)
         db.commit()
-        
+
         return {"success": True, "message": "Отчёт отправлен на проверку"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -302,7 +310,7 @@ def get_my_reports(
     reports = db.query(models.TaskReport).filter(
         models.TaskReport.user_id == current_user.id
     ).all()
-    
+
     return [
         {
             "id": r.id,
@@ -331,13 +339,13 @@ def create_project(
             status="active",
             created_by=current_user.id
         )
-        
+
         db.add(project)
         db.commit()
         db.refresh(project)
-        
+
         return {"success": True, "message": "Проект создан", "id": project.id}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -359,13 +367,13 @@ def create_task(
             status="open",
             created_by=current_user.id
         )
-        
+
         db.add(task)
         db.commit()
         db.refresh(task)
-        
+
         return {"success": True, "message": "Задача создана", "id": task.id}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -380,10 +388,10 @@ def edit_task(
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
         if not task:
             return {"success": False, "message": "Задача не найдена"}
-        
+
         if task.created_by != current_user.id:
             return {"success": False, "message": "Вы можете редактировать только свои задачи"}
-        
+
         if "title" in data:
             task.title = data["title"]
         if "description" in data:
@@ -394,11 +402,11 @@ def edit_task(
             task.start_date = data["start_date"]
         if "end_date" in data:
             task.end_date = data["end_date"]
-        
+
         db.commit()
-        
+
         return {"success": True, "message": "Задача обновлена"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -410,7 +418,7 @@ def get_pending_applications(
     applications = db.query(models.TaskApplication).filter(
         models.TaskApplication.status == "pending"
     ).all()
-    
+
     return [
         {
             "id": a.id,
@@ -434,28 +442,28 @@ def approve_application(
         application = db.query(models.TaskApplication).filter(
             models.TaskApplication.id == app_id
         ).first()
-        
+
         if not application:
             return {"success": False, "message": "Заявка не найдена"}
-        
+
         application.status = "approved"
-        
+
         assignment = models.TaskAssignment(
             task_id=application.task_id,
             user_id=application.user_id,
             assigned_by=current_user.id,
             status="assigned"
         )
-        
+
         task = db.query(models.Task).filter(models.Task.id == application.task_id).first()
         if task:
             task.status = "in_progress"
-        
+
         db.add(assignment)
         db.commit()
-        
+
         return {"success": True, "message": "Волонтёр назначен на задачу"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -469,15 +477,15 @@ def reject_application(
         application = db.query(models.TaskApplication).filter(
             models.TaskApplication.id == app_id
         ).first()
-        
+
         if not application:
             return {"success": False, "message": "Заявка не найдена"}
-        
+
         application.status = "rejected"
         db.commit()
-        
+
         return {"success": True, "message": "Заявка отклонена"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -489,7 +497,7 @@ def get_pending_reports(
     reports = db.query(models.TaskReport).filter(
         models.TaskReport.status == "submitted"
     ).all()
-    
+
     return [
         {
             "id": r.id,
@@ -514,22 +522,22 @@ def approve_report(
         report = db.query(models.TaskReport).filter(
             models.TaskReport.id == report_id
         ).first()
-        
+
         if not report:
             return {"success": False, "message": "Отчёт не найден"}
-        
+
         report.status = "approved"
         report.reviewed_at = datetime.utcnow()
         report.reviewed_by = current_user.id
-        
+
         task = db.query(models.Task).filter(models.Task.id == report.task_id).first()
         if task:
             task.status = "completed"
-        
+
         db.commit()
-        
+
         return {"success": True, "message": "Отчёт одобрен, задача завершена"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -543,18 +551,18 @@ def reject_report(
         report = db.query(models.TaskReport).filter(
             models.TaskReport.id == report_id
         ).first()
-        
+
         if not report:
             return {"success": False, "message": "Отчёт не найден"}
-        
+
         report.status = "rejected"
         report.reviewed_at = datetime.utcnow()
         report.reviewed_by = current_user.id
-        
+
         db.commit()
-        
+
         return {"success": True, "message": "Отчёт отклонён"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -587,13 +595,13 @@ def toggle_user_active(
         user = db.query(models.User).filter(models.User.id == user_id).first()
         if not user:
             return {"success": False, "message": "Пользователь не найден"}
-        
+
         user.is_active = not user.is_active
         db.commit()
-        
+
         status = "активирован" if user.is_active else "деактивирован"
         return {"success": True, "message": f"Пользователь {status}"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -608,17 +616,17 @@ def change_user_role(
         user = db.query(models.User).filter(models.User.id == user_id).first()
         if not user:
             return {"success": False, "message": "Пользователь не найден"}
-        
+
         role_code = data.get("role")
         role = db.query(models.Role).filter(models.Role.code == role_code).first()
         if not role:
             return {"success": False, "message": "Роль не найдена"}
-        
+
         user.role_id = role.id
         db.commit()
-        
+
         return {"success": True, "message": f"Роль изменена на {role.name}"}
-    
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -629,20 +637,20 @@ def admin_stats(
 ):
     total_users = db.query(models.User).count()
     active_users = db.query(models.User).filter(models.User.is_active == True).count()
-    
+
     roles_stats = {}
     roles = db.query(models.Role).all()
     for role in roles:
         count = db.query(models.User).filter(models.User.role_id == role.id).count()
         roles_stats[role.code] = count
-    
+
     tasks_by_status = {
         "open": db.query(models.Task).filter(models.Task.status == "open").count(),
         "in_progress": db.query(models.Task).filter(models.Task.status == "in_progress").count(),
         "completed": db.query(models.Task).filter(models.Task.status == "completed").count(),
         "cancelled": db.query(models.Task).filter(models.Task.status == "cancelled").count()
     }
-    
+
     return {
         "total_users": total_users,
         "active_users": active_users,
@@ -655,3 +663,5 @@ def admin_stats(
 @app.get("/api/health")
 def health():
     return {"status": "healthy"}
+
+
