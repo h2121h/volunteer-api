@@ -1,11 +1,16 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from typing import Optional
+from datetime import datetime
 from app.database import SessionLocal, engine
 from app import models
 from app.config import settings
-
-# Импортируем роутеры
-from app.routers import auth, documents, analytics, projects, reports
+from app.auth import (
+    get_password_hash, authenticate_user, create_access_token,
+    get_current_user, get_current_active_user,
+    volunteer_required, organizer_required, curator_required, admin_required
+)
 
 app = FastAPI(
     title="Волонтёрское API",
@@ -21,19 +26,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
-app.include_router(documents.router)
-app.include_router(analytics.router)
-app.include_router(projects.router)
-app.include_router(reports.router)
-
-@app.get("/")
-def root():
-    return {"message": "Волонтёрское API работает", "version": "1.0.0"}
-
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
 
 def get_db():
     db = SessionLocal()
@@ -42,9 +34,16 @@ def get_db():
     finally:
         db.close()
 
+
 @app.get("/")
 def root():
     return {"message": "Волонтёрское API работает", "version": "1.0.0"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
 
 @app.get("/api/roles")
 def get_roles(db: Session = Depends(get_db)):
@@ -57,6 +56,7 @@ def get_roles(db: Session = Depends(get_db)):
         }
         for r in roles
     ]
+
 
 @app.get("/api/stats")
 def get_stats(db: Session = Depends(get_db)):
@@ -77,6 +77,7 @@ def get_stats(db: Session = Depends(get_db)):
         "projects_count": projects_count
     }
 
+
 @app.get("/api/projects")
 def get_projects(db: Session = Depends(get_db)):
     projects = db.query(models.Project).filter(models.Project.status == "active").all()
@@ -90,10 +91,11 @@ def get_projects(db: Session = Depends(get_db)):
         for p in projects
     ]
 
+
 @app.get("/api/tasks")
 def get_tasks(
-    db: Session = Depends(get_db),
-    status: Optional[str] = None
+        db: Session = Depends(get_db),
+        status: Optional[str] = None
 ):
     query = db.query(models.Task)
     if status:
@@ -114,6 +116,7 @@ def get_tasks(
             "project_id": task.project_id
         })
     return result
+
 
 @app.post("/api/register")
 def register(data: dict, db: Session = Depends(get_db)):
@@ -165,6 +168,7 @@ def register(data: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/login")
 def login(data: dict, db: Session = Depends(get_db)):
     try:
@@ -194,6 +198,7 @@ def login(data: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/users/me")
 def get_current_user_info(current_user: models.User = Depends(get_current_active_user)):
     return {
@@ -206,12 +211,13 @@ def get_current_user_info(current_user: models.User = Depends(get_current_active
         "created_at": current_user.created_at
     }
 
+
 @app.post("/api/tasks/{task_id}/apply")
 def apply_to_task(
-    task_id: int,
-    message: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        task_id: int,
+        message: Optional[str] = None,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     try:
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
@@ -241,10 +247,11 @@ def apply_to_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/my-applications")
 def get_my_applications(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     applications = db.query(models.TaskApplication).filter(
         models.TaskApplication.user_id == current_user.id
@@ -262,11 +269,12 @@ def get_my_applications(
         for a in applications
     ]
 
+
 @app.post("/api/reports/create")
 def create_report(
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     try:
         task_id = data.get("task_id")
@@ -302,10 +310,11 @@ def create_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/my-reports")
 def get_my_reports(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     reports = db.query(models.TaskReport).filter(
         models.TaskReport.user_id == current_user.id
@@ -324,11 +333,12 @@ def get_my_reports(
         for r in reports
     ]
 
+
 @app.post("/api/projects/create")
 def create_project(
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(organizer_required)
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
 ):
     try:
         project = models.Project(
@@ -349,11 +359,12 @@ def create_project(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/tasks/create")
 def create_task(
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(organizer_required)
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
 ):
     try:
         task = models.Task(
@@ -377,12 +388,13 @@ def create_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.put("/api/tasks/{task_id}/edit")
 def edit_task(
-    task_id: int,
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(organizer_required)
+        task_id: int,
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
 ):
     try:
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
@@ -410,10 +422,11 @@ def edit_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/applications/pending")
 def get_pending_applications(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     applications = db.query(models.TaskApplication).filter(
         models.TaskApplication.status == "pending"
@@ -432,11 +445,12 @@ def get_pending_applications(
         for a in applications
     ]
 
+
 @app.post("/api/applications/{app_id}/approve")
 def approve_application(
-    app_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        app_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         application = db.query(models.TaskApplication).filter(
@@ -467,11 +481,12 @@ def approve_application(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/applications/{app_id}/reject")
 def reject_application(
-    app_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        app_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         application = db.query(models.TaskApplication).filter(
@@ -489,10 +504,11 @@ def reject_application(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/reports/pending")
 def get_pending_reports(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     reports = db.query(models.TaskReport).filter(
         models.TaskReport.status == "submitted"
@@ -512,11 +528,12 @@ def get_pending_reports(
         for r in reports
     ]
 
+
 @app.post("/api/reports/{report_id}/approve")
 def approve_report(
-    report_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        report_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         report = db.query(models.TaskReport).filter(
@@ -541,11 +558,12 @@ def approve_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/reports/{report_id}/reject")
 def reject_report(
-    report_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        report_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         report = db.query(models.TaskReport).filter(
@@ -566,10 +584,11 @@ def reject_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/admin/users")
 def get_all_users(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     users = db.query(models.User).all()
     return [
@@ -585,11 +604,12 @@ def get_all_users(
         for u in users
     ]
 
+
 @app.post("/api/admin/users/{user_id}/toggle-active")
 def toggle_user_active(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     try:
         user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -605,12 +625,13 @@ def toggle_user_active(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/admin/users/{user_id}/change-role")
 def change_user_role(
-    user_id: int,
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        user_id: int,
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     try:
         user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -630,10 +651,11 @@ def change_user_role(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/admin/stats")
 def admin_stats(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     total_users = db.query(models.User).count()
     active_users = db.query(models.User).filter(models.User.is_active == True).count()
@@ -659,9 +681,3 @@ def admin_stats(
         "projects": db.query(models.Project).count(),
         "reports_pending": db.query(models.TaskReport).filter(models.TaskReport.status == "submitted").count()
     }
-
-@app.get("/api/health")
-def health():
-    return {"status": "healthy"}
-
-
