@@ -1,16 +1,22 @@
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
+import os
+import uuid
 from app.database import SessionLocal, engine
 from app import models
 from app.config import settings
 from app.auth import (
     get_password_hash, authenticate_user, create_access_token,
     get_current_user, get_current_active_user,
-    volunteer_required, organizer_required, curator_required, admin_required
+    volunteer_required, organizer_required, curator_required, admin_required,
+    decode_token, get_user_by_email
 )
+from pydantic import BaseModel
+from datetime import timedelta
+from app import schemas
 
 app = FastAPI(
     title="Волонтёрское API",
@@ -681,3 +687,212 @@ def admin_stats(
         "projects": db.query(models.Project).count(),
         "reports_pending": db.query(models.TaskReport).filter(models.TaskReport.status == "submitted").count()
     }
+
+
+# ==================== AUTH ====================
+@app.post("/auth/refresh", response_model=schemas.Token)
+def refresh_token(
+        refresh_token: str,
+        db: Session = Depends(get_db)
+):
+    try:
+        payload = decode_token(refresh_token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+        user = get_user_by_email(db, payload.get("sub"))
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+        new_access = create_access_token(
+            data={"sub": user.email},
+            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        return {"access_token": new_access, "token_type": "bearer"}
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+
+# ==================== DOCUMENTS ====================
+UPLOAD_DIR = "media/documents"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/documents/upload")
+async def upload_document(
+        doc_type: str,
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
+):
+    allowed_extensions = ('.pdf', '.jpg', '.jpeg', '.png')
+    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(400, "Only PDF/JPG/PNG allowed")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    filename = f"{current_user.id}_{uuid.uuid4().hex}{ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    content = await file.read()
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    doc = models.VolunteerDocument(
+        user_id=current_user.id,
+        document_type=doc_type,
+        file_path=f"/media/documents/{filename}",
+        verified=False
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    return {"success": True, "id": doc.id, "file_url": doc.file_path}
+
+
+@app.post("/documents/{doc_id}/verify")
+def verify_document(
+        doc_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
+):
+    doc = db.query(models.VolunteerDocument).filter(models.VolunteerDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    doc.verified = True
+    doc.verified_at = datetime.utcnow()
+    doc.verified_by = current_user.id
+    db.commit()
+    return {"success": True, "message": "Документ верифицирован"}
+
+
+# ==================== ANALYTICS ====================
+@app.get("/analytics/summary")
+def get_analytics_summary(
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
+):
+    from sqlalchemy import func
+
+    avg_hours = db.query(func.avg(models.TaskReport.hours_spent)).filter(
+        models.TaskReport.status == "approved"
+    ).scalar() or 0
+
+    return {
+        "total_volunteers": db.query(models.User).join(models.Role).filter(models.Role.code == "volunteer").count(),
+        "active_tasks": db.query(models.Task).filter(models.Task.status == "open").count(),
+        "completed_reports": db.query(models.TaskReport).filter(models.TaskReport.status == "approved").count(),
+        "pending_reports": db.query(models.TaskReport).filter(models.TaskReport.status == "submitted").count(),
+        "avg_hours_per_task": avg_hours
+    }
+
+
+# ==================== PROJECTS FEEDBACK ====================
+class FeedbackCreate(BaseModel):
+    rating: int
+    comment: str
+
+
+@app.post("/projects/{project_id}/feedback")
+def create_feedback(
+        project_id: int,
+        feedback: FeedbackCreate,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
+):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    fb = models.ProjectFeedback(
+        project_id=project_id,
+        user_id=current_user.id,
+        rating=feedback.rating,
+        comment=feedback.comment
+    )
+    db.add(fb)
+    db.commit()
+    return {"success": True, "message": "Отзыв добавлен"}
+
+
+# ==================== DIRECT ASSIGN ====================
+@app.post("/tasks/{task_id}/assign/{user_id}")
+def direct_assign(
+        task_id: int,
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
+):
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    existing = db.query(models.TaskAssignment).filter(
+        models.TaskAssignment.task_id == task_id,
+        models.TaskAssignment.user_id == user_id
+    ).first()
+
+    if existing:
+        raise HTTPException(400, "User already assigned")
+
+    assignment = models.TaskAssignment(
+        task_id=task_id,
+        user_id=user_id,
+        assigned_by=current_user.id,
+        status="assigned"
+    )
+    db.add(assignment)
+    db.commit()
+    return {"success": True, "message": "Волонтёр назначен напрямую"}
+
+
+# ==================== REPORTS WITH PHOTOS ====================
+REPORTS_UPLOAD_DIR = "media/reports"
+os.makedirs(REPORTS_UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/reports/")
+async def create_report_with_photos(
+        task_id: int = Form(...),
+        content: str = Form(...),
+        hours_spent: float = Form(...),
+        geo_lat: float = Form(None),
+        geo_lon: float = Form(None),
+        photos: list[UploadFile] = File(None),
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
+):
+    assignment = db.query(models.TaskAssignment).filter(
+        models.TaskAssignment.task_id == task_id,
+        models.TaskAssignment.user_id == current_user.id
+    ).first()
+    if not assignment:
+        raise HTTPException(403, "Вы не назначены на эту задачу")
+
+    photo_urls = []
+    if photos:
+        for photo in photos:
+            ext = os.path.splitext(photo.filename)[1].lower()
+            filename = f"report_{task_id}_{uuid.uuid4().hex}{ext}"
+            path = os.path.join(REPORTS_UPLOAD_DIR, filename)
+            content_file = await photo.read()
+            with open(path, "wb") as f:
+                f.write(content_file)
+            photo_urls.append(f"/media/reports/{filename}")
+
+    report = models.TaskReport(
+        task_id=task_id,
+        user_id=current_user.id,
+        content=content,
+        hours_spent=hours_spent,
+        photos=",".join(photo_urls) if photo_urls else None,
+        status="submitted"
+    )
+    db.add(report)
+    db.commit()
+    return {"success": True, "id": report.id, "message": "Отчёт отправлен"}
