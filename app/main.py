@@ -1,11 +1,22 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from typing import Optional
+from datetime import datetime
+import os
+import uuid
 from app.database import SessionLocal, engine
 from app import models
 from app.config import settings
-
-# Импортируем роутеры
-from app.routers import auth, documents, analytics, projects, reports
+from app.auth import (
+    get_password_hash, authenticate_user, create_access_token,
+    get_current_user, get_current_active_user,
+    volunteer_required, organizer_required, curator_required, admin_required,
+    decode_token, get_user_by_email
+)
+from pydantic import BaseModel
+from datetime import timedelta
+from app import schemas
 
 app = FastAPI(
     title="Волонтёрское API",
@@ -21,19 +32,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
-app.include_router(documents.router)
-app.include_router(analytics.router)
-app.include_router(projects.router)
-app.include_router(reports.router)
-
-@app.get("/")
-def root():
-    return {"message": "Волонтёрское API работает", "version": "1.0.0"}
-
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
 
 def get_db():
     db = SessionLocal()
@@ -42,9 +40,16 @@ def get_db():
     finally:
         db.close()
 
+
 @app.get("/")
 def root():
     return {"message": "Волонтёрское API работает", "version": "1.0.0"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
 
 @app.get("/api/roles")
 def get_roles(db: Session = Depends(get_db)):
@@ -57,6 +62,7 @@ def get_roles(db: Session = Depends(get_db)):
         }
         for r in roles
     ]
+
 
 @app.get("/api/stats")
 def get_stats(db: Session = Depends(get_db)):
@@ -77,6 +83,7 @@ def get_stats(db: Session = Depends(get_db)):
         "projects_count": projects_count
     }
 
+
 @app.get("/api/projects")
 def get_projects(db: Session = Depends(get_db)):
     projects = db.query(models.Project).filter(models.Project.status == "active").all()
@@ -90,10 +97,11 @@ def get_projects(db: Session = Depends(get_db)):
         for p in projects
     ]
 
+
 @app.get("/api/tasks")
 def get_tasks(
-    db: Session = Depends(get_db),
-    status: Optional[str] = None
+        db: Session = Depends(get_db),
+        status: Optional[str] = None
 ):
     query = db.query(models.Task)
     if status:
@@ -114,6 +122,7 @@ def get_tasks(
             "project_id": task.project_id
         })
     return result
+
 
 @app.post("/api/register")
 def register(data: dict, db: Session = Depends(get_db)):
@@ -165,6 +174,7 @@ def register(data: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/login")
 def login(data: dict, db: Session = Depends(get_db)):
     try:
@@ -194,6 +204,7 @@ def login(data: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/users/me")
 def get_current_user_info(current_user: models.User = Depends(get_current_active_user)):
     return {
@@ -206,12 +217,13 @@ def get_current_user_info(current_user: models.User = Depends(get_current_active
         "created_at": current_user.created_at
     }
 
+
 @app.post("/api/tasks/{task_id}/apply")
 def apply_to_task(
-    task_id: int,
-    message: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        task_id: int,
+        message: Optional[str] = None,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     try:
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
@@ -241,10 +253,11 @@ def apply_to_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/my-applications")
 def get_my_applications(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     applications = db.query(models.TaskApplication).filter(
         models.TaskApplication.user_id == current_user.id
@@ -262,11 +275,12 @@ def get_my_applications(
         for a in applications
     ]
 
+
 @app.post("/api/reports/create")
 def create_report(
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     try:
         task_id = data.get("task_id")
@@ -302,10 +316,11 @@ def create_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/my-reports")
 def get_my_reports(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
 ):
     reports = db.query(models.TaskReport).filter(
         models.TaskReport.user_id == current_user.id
@@ -324,11 +339,12 @@ def get_my_reports(
         for r in reports
     ]
 
+
 @app.post("/api/projects/create")
 def create_project(
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(organizer_required)
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
 ):
     try:
         project = models.Project(
@@ -349,11 +365,12 @@ def create_project(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/tasks/create")
 def create_task(
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(organizer_required)
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
 ):
     try:
         task = models.Task(
@@ -377,12 +394,13 @@ def create_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.put("/api/tasks/{task_id}/edit")
 def edit_task(
-    task_id: int,
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(organizer_required)
+        task_id: int,
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
 ):
     try:
         task = db.query(models.Task).filter(models.Task.id == task_id).first()
@@ -410,10 +428,11 @@ def edit_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/applications/pending")
 def get_pending_applications(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     applications = db.query(models.TaskApplication).filter(
         models.TaskApplication.status == "pending"
@@ -432,11 +451,12 @@ def get_pending_applications(
         for a in applications
     ]
 
+
 @app.post("/api/applications/{app_id}/approve")
 def approve_application(
-    app_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        app_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         application = db.query(models.TaskApplication).filter(
@@ -467,11 +487,12 @@ def approve_application(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/applications/{app_id}/reject")
 def reject_application(
-    app_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        app_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         application = db.query(models.TaskApplication).filter(
@@ -489,10 +510,11 @@ def reject_application(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/reports/pending")
 def get_pending_reports(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     reports = db.query(models.TaskReport).filter(
         models.TaskReport.status == "submitted"
@@ -512,11 +534,12 @@ def get_pending_reports(
         for r in reports
     ]
 
+
 @app.post("/api/reports/{report_id}/approve")
 def approve_report(
-    report_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        report_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         report = db.query(models.TaskReport).filter(
@@ -541,11 +564,12 @@ def approve_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/reports/{report_id}/reject")
 def reject_report(
-    report_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required)
+        report_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
 ):
     try:
         report = db.query(models.TaskReport).filter(
@@ -566,10 +590,11 @@ def reject_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/admin/users")
 def get_all_users(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     users = db.query(models.User).all()
     return [
@@ -585,11 +610,12 @@ def get_all_users(
         for u in users
     ]
 
+
 @app.post("/api/admin/users/{user_id}/toggle-active")
 def toggle_user_active(
-    user_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     try:
         user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -605,12 +631,13 @@ def toggle_user_active(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/admin/users/{user_id}/change-role")
 def change_user_role(
-    user_id: int,
-    data: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        user_id: int,
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     try:
         user = db.query(models.User).filter(models.User.id == user_id).first()
@@ -630,10 +657,11 @@ def change_user_role(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/admin/stats")
 def admin_stats(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(admin_required)
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(admin_required)
 ):
     total_users = db.query(models.User).count()
     active_users = db.query(models.User).filter(models.User.is_active == True).count()
@@ -660,8 +688,211 @@ def admin_stats(
         "reports_pending": db.query(models.TaskReport).filter(models.TaskReport.status == "submitted").count()
     }
 
-@app.get("/api/health")
-def health():
-    return {"status": "healthy"}
+
+# ==================== AUTH ====================
+@app.post("/auth/refresh", response_model=schemas.Token)
+def refresh_token(
+        refresh_token: str,
+        db: Session = Depends(get_db)
+):
+    try:
+        payload = decode_token(refresh_token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+        user = get_user_by_email(db, payload.get("sub"))
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+        new_access = create_access_token(
+            data={"sub": user.email},
+            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        return {"access_token": new_access, "token_type": "bearer"}
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 
+# ==================== DOCUMENTS ====================
+UPLOAD_DIR = "media/documents"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/documents/upload")
+async def upload_document(
+        doc_type: str,
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
+):
+    allowed_extensions = ('.pdf', '.jpg', '.jpeg', '.png')
+    if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+        raise HTTPException(400, "Only PDF/JPG/PNG allowed")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    filename = f"{current_user.id}_{uuid.uuid4().hex}{ext}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+
+    content = await file.read()
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    doc = models.VolunteerDocument(
+        user_id=current_user.id,
+        document_type=doc_type,
+        file_path=f"/media/documents/{filename}",
+        verified=False
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+
+    return {"success": True, "id": doc.id, "file_url": doc.file_path}
+
+
+@app.post("/documents/{doc_id}/verify")
+def verify_document(
+        doc_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
+):
+    doc = db.query(models.VolunteerDocument).filter(models.VolunteerDocument.id == doc_id).first()
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    doc.verified = True
+    doc.verified_at = datetime.utcnow()
+    doc.verified_by = current_user.id
+    db.commit()
+    return {"success": True, "message": "Документ верифицирован"}
+
+
+# ==================== ANALYTICS ====================
+@app.get("/analytics/summary")
+def get_analytics_summary(
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
+):
+    from sqlalchemy import func
+
+    avg_hours = db.query(func.avg(models.TaskReport.hours_spent)).filter(
+        models.TaskReport.status == "approved"
+    ).scalar() or 0
+
+    return {
+        "total_volunteers": db.query(models.User).join(models.Role).filter(models.Role.code == "volunteer").count(),
+        "active_tasks": db.query(models.Task).filter(models.Task.status == "open").count(),
+        "completed_reports": db.query(models.TaskReport).filter(models.TaskReport.status == "approved").count(),
+        "pending_reports": db.query(models.TaskReport).filter(models.TaskReport.status == "submitted").count(),
+        "avg_hours_per_task": avg_hours
+    }
+
+
+# ==================== PROJECTS FEEDBACK ====================
+class FeedbackCreate(BaseModel):
+    rating: int
+    comment: str
+
+
+@app.post("/projects/{project_id}/feedback")
+def create_feedback(
+        project_id: int,
+        feedback: FeedbackCreate,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
+):
+    project = db.query(models.Project).filter(models.Project.id == project_id).first()
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    fb = models.ProjectFeedback(
+        project_id=project_id,
+        user_id=current_user.id,
+        rating=feedback.rating,
+        comment=feedback.comment
+    )
+    db.add(fb)
+    db.commit()
+    return {"success": True, "message": "Отзыв добавлен"}
+
+
+# ==================== DIRECT ASSIGN ====================
+@app.post("/tasks/{task_id}/assign/{user_id}")
+def direct_assign(
+        task_id: int,
+        user_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
+):
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    existing = db.query(models.TaskAssignment).filter(
+        models.TaskAssignment.task_id == task_id,
+        models.TaskAssignment.user_id == user_id
+    ).first()
+
+    if existing:
+        raise HTTPException(400, "User already assigned")
+
+    assignment = models.TaskAssignment(
+        task_id=task_id,
+        user_id=user_id,
+        assigned_by=current_user.id,
+        status="assigned"
+    )
+    db.add(assignment)
+    db.commit()
+    return {"success": True, "message": "Волонтёр назначен напрямую"}
+
+
+# ==================== REPORTS WITH PHOTOS ====================
+REPORTS_UPLOAD_DIR = "media/reports"
+os.makedirs(REPORTS_UPLOAD_DIR, exist_ok=True)
+
+
+@app.post("/reports/")
+async def create_report_with_photos(
+        task_id: int = Form(...),
+        content: str = Form(...),
+        hours_spent: float = Form(...),
+        geo_lat: float = Form(None),
+        geo_lon: float = Form(None),
+        photos: list[UploadFile] = File(None),
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
+):
+    assignment = db.query(models.TaskAssignment).filter(
+        models.TaskAssignment.task_id == task_id,
+        models.TaskAssignment.user_id == current_user.id
+    ).first()
+    if not assignment:
+        raise HTTPException(403, "Вы не назначены на эту задачу")
+
+    photo_urls = []
+    if photos:
+        for photo in photos:
+            ext = os.path.splitext(photo.filename)[1].lower()
+            filename = f"report_{task_id}_{uuid.uuid4().hex}{ext}"
+            path = os.path.join(REPORTS_UPLOAD_DIR, filename)
+            content_file = await photo.read()
+            with open(path, "wb") as f:
+                f.write(content_file)
+            photo_urls.append(f"/media/reports/{filename}")
+
+    report = models.TaskReport(
+        task_id=task_id,
+        user_id=current_user.id,
+        content=content,
+        hours_spent=hours_spent,
+        photos=",".join(photo_urls) if photo_urls else None,
+        status="submitted"
+    )
+    db.add(report)
+    db.commit()
+    return {"success": True, "id": report.id, "message": "Отчёт отправлен"}
