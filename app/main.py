@@ -2,11 +2,11 @@ from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import uuid
 from app.database import SessionLocal, engine
-from app import models
+from app import models, schemas
 from app.config import settings
 from app.auth import (
     get_password_hash, authenticate_user, create_access_token,
@@ -15,8 +15,6 @@ from app.auth import (
     decode_token, get_user_by_email
 )
 from pydantic import BaseModel
-from datetime import timedelta
-from app import schemas
 
 app = FastAPI(
     title="Волонтёрское API",
@@ -32,7 +30,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 def get_db():
     db = SessionLocal()
     try:
@@ -40,16 +37,13 @@ def get_db():
     finally:
         db.close()
 
-
 @app.get("/")
 def root():
     return {"message": "Волонтёрское API работает", "version": "1.0.0"}
 
-
 @app.get("/health")
 def health():
     return {"status": "healthy"}
-
 
 @app.get("/api/roles")
 def get_roles(db: Session = Depends(get_db)):
@@ -63,7 +57,6 @@ def get_roles(db: Session = Depends(get_db)):
         for r in roles
     ]
 
-
 @app.get("/api/stats")
 def get_stats(db: Session = Depends(get_db)):
     volunteers = db.query(models.User).join(models.Role).filter(models.Role.code == "volunteer").count()
@@ -71,7 +64,7 @@ def get_stats(db: Session = Depends(get_db)):
     curators = db.query(models.User).join(models.Role).filter(models.Role.code == "curator").count()
 
     tasks_open = db.query(models.Task).filter(models.Task.status == "open").count()
-    tasks_completed = db.query(models.Task).filter(models.Task.status == "completed").count()
+    tasks_completed = db.query(models.TaskReport).filter(models.TaskReport.is_approved == True).count()
     projects_count = db.query(models.Project).count()
 
     return {
@@ -83,20 +76,18 @@ def get_stats(db: Session = Depends(get_db)):
         "projects_count": projects_count
     }
 
-
 @app.get("/api/projects")
 def get_projects(db: Session = Depends(get_db)):
     projects = db.query(models.Project).filter(models.Project.status == "active").all()
     return [
         {
             "id": p.id,
-            "name": p.name,
+            "title": p.title,
             "description": p.description,
             "status": p.status
         }
         for p in projects
     ]
-
 
 @app.get("/api/tasks")
 def get_tasks(
@@ -110,26 +101,26 @@ def get_tasks(
     tasks = query.all()
     result = []
     for task in tasks:
-        creator_name = task.creator.full_name if task.creator else "Неизвестно"
         result.append({
             "id": task.id,
             "title": task.title,
             "description": task.description,
             "location": task.location,
+            "event_date": task.event_date,
+            "needed_people": task.needed_people,
             "status": task.status,
-            "created_by": creator_name,
-            "created_at": task.created_at,
             "project_id": task.project_id
         })
     return result
-
 
 @app.post("/api/register")
 def register(data: dict, db: Session = Depends(get_db)):
     try:
         email = data.get("email")
         password = data.get("password")
-        full_name = data.get("full_name", "")
+        name = data.get("name", email.split('@')[0])
+        phone = data.get("phone", None)
+        city = data.get("city", None)
         role_code = data.get("role", "volunteer")
 
         if not email or not password:
@@ -152,7 +143,9 @@ def register(data: dict, db: Session = Depends(get_db)):
         new_user = models.User(
             email=email,
             password_hash=hashed_password,
-            full_name=full_name,
+            name=name,
+            phone=phone,
+            city=city,
             role_id=role.id,
             is_active=True
         )
@@ -166,14 +159,13 @@ def register(data: dict, db: Session = Depends(get_db)):
             "message": "Регистрация успешна",
             "user": {
                 "email": new_user.email,
-                "name": new_user.full_name,
+                "name": new_user.name,
                 "role": new_user.role.code
             }
         }
 
     except Exception as e:
         return {"success": False, "message": str(e)}
-
 
 @app.post("/api/login")
 def login(data: dict, db: Session = Depends(get_db)):
@@ -195,7 +187,7 @@ def login(data: dict, db: Session = Depends(get_db)):
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "name": user.full_name or user.email.split('@')[0],
+                "name": user.name or user.email.split('@')[0],
                 "role": user.role.code,
                 "role_name": user.role.name
             }
@@ -204,19 +196,17 @@ def login(data: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
 @app.get("/api/users/me")
 def get_current_user_info(current_user: models.User = Depends(get_current_active_user)):
     return {
         "id": current_user.id,
         "email": current_user.email,
-        "name": current_user.full_name,
+        "name": current_user.name,
         "role": current_user.role.code,
         "role_name": current_user.role.name,
         "is_active": current_user.is_active,
         "created_at": current_user.created_at
     }
-
 
 @app.post("/api/tasks/{task_id}/apply")
 def apply_to_task(
@@ -253,7 +243,6 @@ def apply_to_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
 @app.get("/api/my-applications")
 def get_my_applications(
         db: Session = Depends(get_db),
@@ -275,7 +264,6 @@ def get_my_applications(
         for a in applications
     ]
 
-
 @app.post("/api/reports/create")
 def create_report(
         data: dict,
@@ -284,11 +272,11 @@ def create_report(
 ):
     try:
         task_id = data.get("task_id")
-        content = data.get("content")
-        hours_spent = data.get("hours_spent")
-        photos = data.get("photos")
+        comment = data.get("comment")
+        hours = data.get("hours")
+        photo_url = data.get("photo_url")
 
-        if not task_id or not content:
+        if not task_id or not comment:
             return {"success": False, "message": "Необходимо указать задачу и содержание отчёта"}
 
         assignment = db.query(models.TaskAssignment).filter(
@@ -300,12 +288,12 @@ def create_report(
             return {"success": False, "message": "Эта задача не назначена вам"}
 
         report = models.TaskReport(
-            task_id=task_id,
+            assignment_id=assignment.id,
             user_id=current_user.id,
-            content=content,
-            hours_spent=hours_spent,
-            photos=photos,
-            status="submitted"
+            comment=comment,
+            hours=hours,
+            photo_url=photo_url,
+            is_approved=False
         )
 
         db.add(report)
@@ -315,7 +303,6 @@ def create_report(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
-
 
 @app.get("/api/my-reports")
 def get_my_reports(
@@ -329,16 +316,15 @@ def get_my_reports(
     return [
         {
             "id": r.id,
-            "task_id": r.task_id,
-            "task_title": r.task.title if r.task else "Неизвестно",
-            "content": r.content,
-            "hours_spent": r.hours_spent,
-            "status": r.status,
+            "assignment_id": r.assignment_id,
+            "comment": r.comment,
+            "hours": r.hours,
+            "photo_url": r.photo_url,
+            "is_approved": r.is_approved,
             "submitted_at": r.submitted_at
         }
         for r in reports
     ]
-
 
 @app.post("/api/projects/create")
 def create_project(
@@ -348,10 +334,8 @@ def create_project(
 ):
     try:
         project = models.Project(
-            name=data.get("name"),
+            title=data.get("title"),
             description=data.get("description"),
-            start_date=data.get("start_date"),
-            end_date=data.get("end_date"),
             status="active",
             created_by=current_user.id
         )
@@ -365,7 +349,6 @@ def create_project(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
 @app.post("/api/tasks/create")
 def create_task(
         data: dict,
@@ -377,12 +360,10 @@ def create_task(
             title=data.get("title"),
             description=data.get("description"),
             project_id=data.get("project_id"),
+            event_date=data.get("event_date"),
             location=data.get("location"),
-            required_skills=data.get("required_skills"),
-            start_date=data.get("start_date"),
-            end_date=data.get("end_date"),
-            status="open",
-            created_by=current_user.id
+            needed_people=data.get("needed_people", 5),
+            status="open"
         )
 
         db.add(task)
@@ -393,7 +374,6 @@ def create_task(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
-
 
 @app.put("/api/tasks/{task_id}/edit")
 def edit_task(
@@ -407,19 +387,16 @@ def edit_task(
         if not task:
             return {"success": False, "message": "Задача не найдена"}
 
-        if task.created_by != current_user.id:
-            return {"success": False, "message": "Вы можете редактировать только свои задачи"}
-
         if "title" in data:
             task.title = data["title"]
         if "description" in data:
             task.description = data["description"]
+        if "event_date" in data:
+            task.event_date = data["event_date"]
         if "location" in data:
             task.location = data["location"]
-        if "start_date" in data:
-            task.start_date = data["start_date"]
-        if "end_date" in data:
-            task.end_date = data["end_date"]
+        if "needed_people" in data:
+            task.needed_people = data["needed_people"]
 
         db.commit()
 
@@ -427,7 +404,6 @@ def edit_task(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
-
 
 @app.get("/api/applications/pending")
 def get_pending_applications(
@@ -444,13 +420,12 @@ def get_pending_applications(
             "task_id": a.task_id,
             "task_title": a.task.title if a.task else "Неизвестно",
             "user_id": a.user_id,
-            "user_name": a.user.full_name if a.user else "Неизвестно",
+            "user_name": a.user.name if a.user else "Неизвестно",
             "message": a.message,
             "applied_at": a.applied_at
         }
         for a in applications
     ]
-
 
 @app.post("/api/applications/{app_id}/approve")
 def approve_application(
@@ -487,7 +462,6 @@ def approve_application(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
 @app.post("/api/applications/{app_id}/reject")
 def reject_application(
         app_id: int,
@@ -510,30 +484,28 @@ def reject_application(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
 @app.get("/api/reports/pending")
 def get_pending_reports(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(curator_required)
 ):
     reports = db.query(models.TaskReport).filter(
-        models.TaskReport.status == "submitted"
+        models.TaskReport.is_approved == False
     ).all()
 
     return [
         {
             "id": r.id,
-            "task_id": r.task_id,
-            "task_title": r.task.title if r.task else "Неизвестно",
+            "assignment_id": r.assignment_id,
             "user_id": r.user_id,
-            "user_name": r.user.full_name if r.user else "Неизвестно",
-            "content": r.content,
-            "hours_spent": r.hours_spent,
+            "user_name": r.user.name if r.user else "Неизвестно",
+            "comment": r.comment,
+            "hours": r.hours,
+            "photo_url": r.photo_url,
             "submitted_at": r.submitted_at
         }
         for r in reports
     ]
-
 
 @app.post("/api/reports/{report_id}/approve")
 def approve_report(
@@ -549,13 +521,15 @@ def approve_report(
         if not report:
             return {"success": False, "message": "Отчёт не найден"}
 
-        report.status = "approved"
-        report.reviewed_at = datetime.utcnow()
-        report.reviewed_by = current_user.id
+        report.is_approved = True
 
-        task = db.query(models.Task).filter(models.Task.id == report.task_id).first()
-        if task:
-            task.status = "completed"
+        assignment = db.query(models.TaskAssignment).filter(
+            models.TaskAssignment.id == report.assignment_id
+        ).first()
+        if assignment:
+            task = db.query(models.Task).filter(models.Task.id == assignment.task_id).first()
+            if task:
+                task.status = "completed"
 
         db.commit()
 
@@ -563,7 +537,6 @@ def approve_report(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
-
 
 @app.post("/api/reports/{report_id}/reject")
 def reject_report(
@@ -579,17 +552,13 @@ def reject_report(
         if not report:
             return {"success": False, "message": "Отчёт не найден"}
 
-        report.status = "rejected"
-        report.reviewed_at = datetime.utcnow()
-        report.reviewed_by = current_user.id
-
+        db.delete(report)
         db.commit()
 
         return {"success": True, "message": "Отчёт отклонён"}
 
     except Exception as e:
         return {"success": False, "message": str(e)}
-
 
 @app.get("/api/admin/users")
 def get_all_users(
@@ -601,7 +570,7 @@ def get_all_users(
         {
             "id": u.id,
             "email": u.email,
-            "name": u.full_name,
+            "name": u.name,
             "role": u.role.code,
             "role_name": u.role.name,
             "is_active": u.is_active,
@@ -609,7 +578,6 @@ def get_all_users(
         }
         for u in users
     ]
-
 
 @app.post("/api/admin/users/{user_id}/toggle-active")
 def toggle_user_active(
@@ -630,7 +598,6 @@ def toggle_user_active(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
-
 
 @app.post("/api/admin/users/{user_id}/change-role")
 def change_user_role(
@@ -657,7 +624,6 @@ def change_user_role(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
 @app.get("/api/admin/stats")
 def admin_stats(
         db: Session = Depends(get_db),
@@ -675,8 +641,7 @@ def admin_stats(
     tasks_by_status = {
         "open": db.query(models.Task).filter(models.Task.status == "open").count(),
         "in_progress": db.query(models.Task).filter(models.Task.status == "in_progress").count(),
-        "completed": db.query(models.Task).filter(models.Task.status == "completed").count(),
-        "cancelled": db.query(models.Task).filter(models.Task.status == "cancelled").count()
+        "completed": db.query(models.Task).filter(models.Task.status == "completed").count()
     }
 
     return {
@@ -685,9 +650,8 @@ def admin_stats(
         "roles": roles_stats,
         "tasks": tasks_by_status,
         "projects": db.query(models.Project).count(),
-        "reports_pending": db.query(models.TaskReport).filter(models.TaskReport.status == "submitted").count()
+        "reports_pending": db.query(models.TaskReport).filter(models.TaskReport.is_approved == False).count()
     }
-
 
 # ==================== AUTH ====================
 @app.post("/auth/refresh", response_model=schemas.Token)
@@ -712,11 +676,9 @@ def refresh_token(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-
 # ==================== DOCUMENTS ====================
 UPLOAD_DIR = "media/documents"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 
 @app.post("/documents/upload")
 async def upload_document(
@@ -739,16 +701,15 @@ async def upload_document(
 
     doc = models.VolunteerDocument(
         user_id=current_user.id,
-        document_type=doc_type,
-        file_path=f"/media/documents/{filename}",
-        verified=False
+        doc_type=doc_type,
+        file_url=f"/media/documents/{filename}",
+        status="new"
     )
     db.add(doc)
     db.commit()
     db.refresh(doc)
 
-    return {"success": True, "id": doc.id, "file_url": doc.file_path}
-
+    return {"success": True, "id": doc.id, "file_url": doc.file_url}
 
 @app.post("/documents/{doc_id}/verify")
 def verify_document(
@@ -760,12 +721,11 @@ def verify_document(
     if not doc:
         raise HTTPException(404, "Document not found")
 
-    doc.verified = True
+    doc.status = "verified"
     doc.verified_at = datetime.utcnow()
     doc.verified_by = current_user.id
     db.commit()
     return {"success": True, "message": "Документ верифицирован"}
-
 
 # ==================== ANALYTICS ====================
 @app.get("/analytics/summary")
@@ -775,24 +735,22 @@ def get_analytics_summary(
 ):
     from sqlalchemy import func
 
-    avg_hours = db.query(func.avg(models.TaskReport.hours_spent)).filter(
-        models.TaskReport.status == "approved"
+    avg_hours = db.query(func.avg(models.TaskReport.hours)).filter(
+        models.TaskReport.is_approved == True
     ).scalar() or 0
 
     return {
         "total_volunteers": db.query(models.User).join(models.Role).filter(models.Role.code == "volunteer").count(),
         "active_tasks": db.query(models.Task).filter(models.Task.status == "open").count(),
-        "completed_reports": db.query(models.TaskReport).filter(models.TaskReport.status == "approved").count(),
-        "pending_reports": db.query(models.TaskReport).filter(models.TaskReport.status == "submitted").count(),
-        "avg_hours_per_task": avg_hours
+        "completed_reports": db.query(models.TaskReport).filter(models.TaskReport.is_approved == True).count(),
+        "pending_reports": db.query(models.TaskReport).filter(models.TaskReport.is_approved == False).count(),
+        "avg_hours_per_task": float(avg_hours)
     }
-
 
 # ==================== PROJECTS FEEDBACK ====================
 class FeedbackCreate(BaseModel):
     rating: int
     comment: str
-
 
 @app.post("/projects/{project_id}/feedback")
 def create_feedback(
@@ -814,7 +772,6 @@ def create_feedback(
     db.add(fb)
     db.commit()
     return {"success": True, "message": "Отзыв добавлен"}
-
 
 # ==================== DIRECT ASSIGN ====================
 @app.post("/tasks/{task_id}/assign/{user_id}")
@@ -850,19 +807,15 @@ def direct_assign(
     db.commit()
     return {"success": True, "message": "Волонтёр назначен напрямую"}
 
-
 # ==================== REPORTS WITH PHOTOS ====================
 REPORTS_UPLOAD_DIR = "media/reports"
 os.makedirs(REPORTS_UPLOAD_DIR, exist_ok=True)
 
-
 @app.post("/reports/")
 async def create_report_with_photos(
         task_id: int = Form(...),
-        content: str = Form(...),
-        hours_spent: float = Form(...),
-        geo_lat: float = Form(None),
-        geo_lon: float = Form(None),
+        comment: str = Form(...),
+        hours: float = Form(...),
         photos: list[UploadFile] = File(None),
         db: Session = Depends(get_db),
         current_user: models.User = Depends(volunteer_required)
@@ -880,18 +833,18 @@ async def create_report_with_photos(
             ext = os.path.splitext(photo.filename)[1].lower()
             filename = f"report_{task_id}_{uuid.uuid4().hex}{ext}"
             path = os.path.join(REPORTS_UPLOAD_DIR, filename)
-            content_file = await photo.read()
+            content = await photo.read()
             with open(path, "wb") as f:
-                f.write(content_file)
+                f.write(content)
             photo_urls.append(f"/media/reports/{filename}")
 
     report = models.TaskReport(
-        task_id=task_id,
+        assignment_id=assignment.id,
         user_id=current_user.id,
-        content=content,
-        hours_spent=hours_spent,
-        photos=",".join(photo_urls) if photo_urls else None,
-        status="submitted"
+        comment=comment,
+        hours=hours,
+        photo_url=",".join(photo_urls) if photo_urls else None,
+        is_approved=False
     )
     db.add(report)
     db.commit()

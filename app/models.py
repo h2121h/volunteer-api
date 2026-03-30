@@ -1,158 +1,277 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Float, Table
+from sqlalchemy import (
+    Column, SmallInteger, Integer, BigInteger, String, Boolean,
+    DateTime, Date, ForeignKey, Text, Numeric, UniqueConstraint, Index, Table
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import INET
 from app.database import Base
+
+
+# ─── Many-to-many: user_skills ───────────────────────────────────────────────
 
 user_skills = Table(
     'user_skills',
     Base.metadata,
-    Column('user_id', Integer, ForeignKey('users.id')),
-    Column('skill_id', Integer, ForeignKey('skills.id'))
+    Column('user_id',  BigInteger,   ForeignKey('users.id',  ondelete='CASCADE')),
+    Column('skill_id', SmallInteger, ForeignKey('skills.id', ondelete='CASCADE')),
 )
 
-class User(Base):
-    __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
-    full_name = Column(String, nullable=True)
-    is_active = Column(Boolean, default=True)
-    role_id = Column(Integer, ForeignKey('roles.id'))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    role = relationship("Role", back_populates="users")
-    skills = relationship("Skill", secondary=user_skills, back_populates="users")
-    tasks_created = relationship("Task", foreign_keys="Task.created_by", back_populates="creator")
-    task_applications = relationship("TaskApplication", foreign_keys="TaskApplication.user_id", back_populates="user")
-    task_assignments = relationship("TaskAssignment", foreign_keys="TaskAssignment.user_id", back_populates="user")
-    reports = relationship("TaskReport", foreign_keys="TaskReport.user_id", back_populates="user")
-    documents = relationship("VolunteerDocument", foreign_keys="VolunteerDocument.user_id", back_populates="user")
+# ─── Role ────────────────────────────────────────────────────────────────────
 
 class Role(Base):
-    __tablename__ = "roles"
+    tablename = 'roles'
 
-    id = Column(Integer, primary_key=True, index=True)
-    code = Column(String, unique=True, nullable=False)
-    name = Column(String, unique=True, nullable=False)
+    id   = Column(SmallInteger, primary_key=True, autoincrement=True)
+    code = Column(String(30),  unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
 
-    users = relationship("User", back_populates="role")
+    users = relationship('User', back_populates='role')
 
-class Skill(Base):
-    __tablename__ = "skills"
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
-    category = Column(String)
+# ─── User ────────────────────────────────────────────────────────────────────
 
-    users = relationship("User", secondary=user_skills, back_populates="users")
+class User(Base):
+    tablename = 'users'
+
+    id            = Column(BigInteger, primary_key=True, autoincrement=True)
+    email         = Column(String(180), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    name          = Column(String(120), nullable=False)   # full_name -> name
+    phone         = Column(String(30))
+    city          = Column(String(100))
+    role_id       = Column(SmallInteger, ForeignKey('roles.id'))
+    is_active     = Column(Boolean, default=True)
+    is_verified   = Column(Boolean, default=False)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    last_login_at = Column(DateTime(timezone=True))
+
+    role              = relationship('Role', back_populates='users')
+    skills            = relationship('Skill', secondary=user_skills, back_populates='users')
+    documents         = relationship('VolunteerDocument',
+                                     foreign_keys='VolunteerDocument.user_id',
+                                     back_populates='user')
+    projects_created  = relationship('Project',
+                                     foreign_keys='Project.created_by',
+                                     back_populates='creator')
+    task_applications = relationship('TaskApplication',
+                                     foreign_keys='TaskApplication.user_id',
+                                     back_populates='user')
+    task_assignments  = relationship('TaskAssignment',
+                                     foreign_keys='TaskAssignment.user_id',
+                                     back_populates='user')
+    reports           = relationship('TaskReport',
+                                     foreign_keys='TaskReport.user_id',
+                                     back_populates='user')
+    feedback          = relationship('ProjectFeedback',
+                                     foreign_keys='ProjectFeedback.user_id',
+                                     back_populates='user')
+    backups_performed = relationship('Backup',
+                                     foreign_keys='Backup.performed_by',
+                                     back_populates='performer')
+
+
+# ─── Login log ───────────────────────────────────────────────────────────────
+
+class Login(Base):
+    tablename = 'logins'
+
+    id          = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id     = Column(BigInteger, ForeignKey('users.id', ondelete='SET NULL'))
+    email       = Column(String(180))
+    ip          = Column(INET)
+    user_agent  = Column(Text)
+    success     = Column(Boolean, nullable=False)
+    reason      = Column(String(80))
+    happened_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship('User')
+
+    table_args = (
+        Index('idx_logins_email', 'email', 'happened_at'),
+    )
+
+
+# ─── Volunteer documents ─────────────────────────────────────────────────────
+
+class VolunteerDocument(Base):
+    tablename = 'volunteer_documents'
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
+    doc_type = Column(String(80), nullable=False)  # document_type -> doc_type
+    file_url = Column(Text, nullable=False)  # file_path -> file_url
+    status = Column(String(20), default='new')  # verified bool -> status varchar
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    verified_at = Column(DateTime(timezone=True))
+    verified_by = Column(BigInteger, ForeignKey('users.id'))
+
+    user = relationship('User', foreign_keys=[user_id], back_populates='documents')
+    verifier = relationship('User', foreign_keys=[verified_by])
+
+
+# ─── Project ─────────────────────────────────────────────────────────────────
 
 class Project(Base):
-    __tablename__ = "projects"
+    tablename = 'projects'
 
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    title = Column(String(200), nullable=False)  # name -> title
     description = Column(Text)
-    start_date = Column(DateTime)
-    end_date = Column(DateTime)
-    status = Column(String, default="active")
-    created_by = Column(Integer, ForeignKey('users.id'))
+    status = Column(String(20), default='active')
+    created_by = Column(BigInteger, ForeignKey('users.id'))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # start_date / end_date отсутствуют в SQL-схеме — убраны
 
-    creator = relationship("User", foreign_keys=[created_by])
-    tasks = relationship("Task", back_populates="project")
+    creator = relationship('User', foreign_keys=[created_by], back_populates='projects_created')
+    tasks = relationship('Task', back_populates='project')
+    feedback = relationship('ProjectFeedback', back_populates='project')
+
+
+# ─── Task ────────────────────────────────────────────────────────────────────
 
 class Task(Base):
-    __tablename__ = "tasks"
+    tablename = 'tasks'
 
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, nullable=False)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    project_id = Column(BigInteger, ForeignKey('projects.id', ondelete='CASCADE'))
+    title = Column(String(180), nullable=False)
     description = Column(Text)
-    project_id = Column(Integer, ForeignKey('projects.id'))
-    location = Column(String)
-    required_skills = Column(String)
-    status = Column(String, default="open")
-    priority = Column(String, default="medium")
-    start_date = Column(DateTime)
-    end_date = Column(DateTime)
-    created_by = Column(Integer, ForeignKey('users.id'))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    event_date = Column(Date, nullable=False)  # start/end_date -> event_date
+    location = Column(String(150))
+    needed_people = Column(SmallInteger, default=5)  # добавлено из SQL
+    status = Column(String(20), default='open')
+    # priority, required_skills, created_by отсутствуют в SQL-схеме — убраны
 
-    project = relationship("Project", back_populates="tasks")
-    creator = relationship("User", foreign_keys=[created_by], back_populates="tasks_created")
-    applications = relationship("TaskApplication", foreign_keys="TaskApplication.task_id", back_populates="task")
-    assignments = relationship("TaskAssignment", foreign_keys="TaskAssignment.task_id", back_populates="task")
-    reports = relationship("TaskReport", foreign_keys="TaskReport.task_id", back_populates="task")
+    project = relationship('Project', back_populates='tasks')
+    applications = relationship('TaskApplication',
+                                foreign_keys='TaskApplication.task_id',
+                                back_populates='task')
+    assignments = relationship('TaskAssignment',
+                               foreign_keys='TaskAssignment.task_id',
+                               back_populates='task')
+
+    table_args = (
+        Index('idx_tasks_date', 'event_date'),
+    )
+
+
+# ─── Task application ────────────────────────────────────────────────────────
 
 class TaskApplication(Base):
-    __tablename__ = "task_applications"
+    tablename = 'task_applications'
 
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey('tasks.id'))
-    user_id = Column(Integer, ForeignKey('users.id'))
-    status = Column(String, default="pending")
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    task_id = Column(BigInteger, ForeignKey('tasks.id', ondelete='CASCADE'))
+    user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
+    status = Column(String(20), default='pending')
     message = Column(Text)
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    task = relationship("Task", foreign_keys=[task_id], back_populates="applications")
-    user = relationship("User", foreign_keys=[user_id], back_populates="task_applications")
+    task = relationship('Task', foreign_keys=[task_id], back_populates='applications')
+    user = relationship('User', foreign_keys=[user_id], back_populates='task_applications')
+
+    table_args = (
+        UniqueConstraint('task_id', 'user_id'),
+        Index('idx_applications_task', 'task_id', 'status'),
+    )
+
+
+# ─── Task assignment ─────────────────────────────────────────────────────────
 
 class TaskAssignment(Base):
-    __tablename__ = "task_assignments"
-
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey('tasks.id'))
-    user_id = Column(Integer, ForeignKey('users.id'))
-    assigned_by = Column(Integer, ForeignKey('users.id'))
+    tablename = 'task_assignments'
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    task_id = Column(BigInteger, ForeignKey('tasks.id', ondelete='CASCADE'))
+    user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
     assigned_at = Column(DateTime(timezone=True), server_default=func.now())
-    status = Column(String, default="assigned")
+    assigned_by = Column(BigInteger, ForeignKey('users.id'))
+    status = Column(String(20), default='assigned')
 
-    task = relationship("Task", foreign_keys=[task_id], back_populates="assignments")
-    user = relationship("User", foreign_keys=[user_id], back_populates="task_assignments")
-    assigner = relationship("User", foreign_keys=[assigned_by])
+    task = relationship('Task', foreign_keys=[task_id], back_populates='assignments')
+    user = relationship('User', foreign_keys=[user_id], back_populates='task_assignments')
+    assigner = relationship('User', foreign_keys=[assigned_by])
+    reports = relationship('TaskReport', back_populates='assignment')
+
+    table_args = (
+        Index('idx_assignments_task', 'task_id'),
+    )
+
+
+# ─── Task report ─────────────────────────────────────────────────────────────
 
 class TaskReport(Base):
-    __tablename__ = "task_reports"
+    tablename = 'task_reports'
 
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey('tasks.id'))
-    user_id = Column(Integer, ForeignKey('users.id'))
-    content = Column(Text, nullable=False)
-    hours_spent = Column(Float)
-    photos = Column(String)
-    status = Column(String, default="submitted")
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    assignment_id = Column(BigInteger,
+                           ForeignKey('task_assignments.id', ondelete='CASCADE'))
+    user_id = Column(BigInteger, ForeignKey('users.id'))
+    hours = Column(Numeric(5, 2))  # hours_spent -> hours
+    comment = Column(Text)  # content -> comment
+    photo_url = Column(Text)  # photos -> photo_url
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
-    reviewed_at = Column(DateTime(timezone=True), nullable=True)
-    reviewed_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    is_approved = Column(Boolean, default=False)  # status/reviewed_* -> is_approved
 
-    task = relationship("Task", foreign_keys=[task_id], back_populates="reports")
-    user = relationship("User", foreign_keys=[user_id], back_populates="reports")
-    reviewer = relationship("User", foreign_keys=[reviewed_by])
+    assignment = relationship('TaskAssignment', back_populates='reports')
+    user = relationship('User', foreign_keys=[user_id], back_populates='reports')
 
-class VolunteerDocument(Base):
-    __tablename__ = "volunteer_documents"
+    table_args = (
+        Index('idx_reports_assignment', 'assignment_id'),
+    )
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('users.id'))
-    document_type = Column(String)
-    file_path = Column(String)
-    verified = Column(Boolean, default=False)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
-    verified_at = Column(DateTime(timezone=True), nullable=True)
-    verified_by = Column(Integer, ForeignKey('users.id'), nullable=True)
 
-    user = relationship("User", foreign_keys=[user_id], back_populates="documents")
-    verifier = relationship("User", foreign_keys=[verified_by])
+# ─── Project feedback ────────────────────────────────────────────────────────
 
 class ProjectFeedback(Base):
-    __tablename__ = "project_feedback"
+    tablename = 'project_feedback'
 
-    id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey('projects.id'))
-    user_id = Column(Integer, ForeignKey('users.id'))
-    rating = Column(Integer)
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    project_id = Column(BigInteger, ForeignKey('projects.id', ondelete='CASCADE'))
+    user_id = Column(BigInteger, ForeignKey('users.id'))
+    rating = Column(SmallInteger)  # CHECK (1..5) задан на уровне БД
     comment = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())  # created_at -> submitted_at
 
-    project = relationship("Project")
-    user = relationship("User")
+    project = relationship('Project', back_populates='feedback')
+    user = relationship('User', foreign_keys=[user_id], back_populates='feedback')
+
+
+# ─── Skill ───────────────────────────────────────────────────────────────────
+
+class Skill(Base):
+    tablename = 'skills'
+
+    id = Column(SmallInteger, primary_key=True, autoincrement=True)
+    name = Column(String(80), unique=True, nullable=False)
+    # category отсутствует в SQL-схеме — убрано
+
+    users = relationship('User', secondary=user_skills, back_populates='skills')
+
+
+# ─── Backup ──────────────────────────────────────────────────────────────────
+
+class Backup(Base):
+    tablename = 'backups'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    performed_by = Column(BigInteger, ForeignKey('users.id'))
+    backup_date = Column(DateTime(timezone=True), server_default=func.now())
+    file_path = Column(Text)
+    size_mb = Column(Integer)
+    status = Column(String(20), default='success')
+
+    performer = relationship('User', foreign_keys=[performed_by], back_populates='backups_performed')
+
+
+# ─── Registration ────────────────────────────────────────────────────────────
+
+class Registration(Base):
+    tablename = 'registration'
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    email = Column(String(180), unique=True, nullable=False)
+    token = Column(String(100))
+    status = Column(String(20), default='new')
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user_id = Column(BigInteger)  # намеренно без FK — соответствует SQL
