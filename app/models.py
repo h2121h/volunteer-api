@@ -21,7 +21,7 @@ user_skills = Table(
 # ─── Role ────────────────────────────────────────────────────────────────────
 
 class Role(Base):
-    tablename = 'roles'
+    __tablename__ = 'roles'
 
     id   = Column(SmallInteger, primary_key=True, autoincrement=True)
     code = Column(String(30),  unique=True, nullable=False)
@@ -33,7 +33,7 @@ class Role(Base):
 # ─── User ────────────────────────────────────────────────────────────────────
 
 class User(Base):
-    tablename = 'users'
+    __tablename__ = 'users'
 
     id            = Column(BigInteger, primary_key=True, autoincrement=True)
     email         = Column(String(180), unique=True, nullable=False)
@@ -75,7 +75,7 @@ class User(Base):
 # ─── Login log ───────────────────────────────────────────────────────────────
 
 class Login(Base):
-    tablename = 'logins'
+    __tablename__ = 'logins'
 
     id          = Column(BigInteger, primary_key=True, autoincrement=True)
     user_id     = Column(BigInteger, ForeignKey('users.id', ondelete='SET NULL'))
@@ -96,7 +96,7 @@ class Login(Base):
 # ─── Volunteer documents ─────────────────────────────────────────────────────
 
 class VolunteerDocument(Base):
-    tablename = 'volunteer_documents'
+    __tablename__ = 'volunteer_documents'
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
     doc_type = Column(String(80), nullable=False)  # document_type -> doc_type
@@ -113,7 +113,7 @@ class VolunteerDocument(Base):
 # ─── Project ─────────────────────────────────────────────────────────────────
 
 class Project(Base):
-    tablename = 'projects'
+    __tablename__ = 'projects'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     title = Column(String(200), nullable=False)  # name -> title
@@ -131,7 +131,7 @@ class Project(Base):
 # ─── Task ────────────────────────────────────────────────────────────────────
 
 class Task(Base):
-    tablename = 'tasks'
+    __tablename__ = 'tasks'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     project_id = Column(BigInteger, ForeignKey('projects.id', ondelete='CASCADE'))
@@ -159,7 +159,7 @@ class Task(Base):
 # ─── Task application ────────────────────────────────────────────────────────
 
 class TaskApplication(Base):
-    tablename = 'task_applications'
+    __tablename__ = 'task_applications'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     task_id = Column(BigInteger, ForeignKey('tasks.id', ondelete='CASCADE'))
@@ -180,7 +180,7 @@ class TaskApplication(Base):
 # ─── Task assignment ─────────────────────────────────────────────────────────
 
 class TaskAssignment(Base):
-    tablename = 'task_assignments'
+    __tablename__ = 'task_assignments'
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     task_id = Column(BigInteger, ForeignKey('tasks.id', ondelete='CASCADE'))
     user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
@@ -201,7 +201,7 @@ class TaskAssignment(Base):
 # ─── Task report ─────────────────────────────────────────────────────────────
 
 class TaskReport(Base):
-    tablename = 'task_reports'
+    __tablename__ = 'task_reports'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     assignment_id = Column(BigInteger,
@@ -224,7 +224,7 @@ class TaskReport(Base):
 # ─── Project feedback ────────────────────────────────────────────────────────
 
 class ProjectFeedback(Base):
-    tablename = 'project_feedback'
+    __tablename__ = 'project_feedback'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     project_id = Column(BigInteger, ForeignKey('projects.id', ondelete='CASCADE'))
@@ -240,7 +240,7 @@ class ProjectFeedback(Base):
 # ─── Skill ───────────────────────────────────────────────────────────────────
 
 class Skill(Base):
-    tablename = 'skills'
+    __tablename__ = 'skills'
 
     id = Column(SmallInteger, primary_key=True, autoincrement=True)
     name = Column(String(80), unique=True, nullable=False)
@@ -252,7 +252,7 @@ class Skill(Base):
 # ─── Backup ──────────────────────────────────────────────────────────────────
 
 class Backup(Base):
-    tablename = 'backups'
+    __tablename__ = 'backups'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     performed_by = Column(BigInteger, ForeignKey('users.id'))
@@ -267,7 +267,7 @@ class Backup(Base):
 # ─── Registration ────────────────────────────────────────────────────────────
 
 class Registration(Base):
-    tablename = 'registration'
+    __tablename__ = 'registration'
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     email = Column(String(180), unique=True, nullable=False)
