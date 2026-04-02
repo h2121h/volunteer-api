@@ -21,10 +21,10 @@ user_skills = Table(
 # ─── Role ────────────────────────────────────────────────────────────────────
 
 class Role(Base):
-    __tablename__ = 'roles'
+    __tablename__ = 'roles'  
 
-    id   = Column(SmallInteger, primary_key=True, autoincrement=True)
-    code = Column(String(30),  unique=True, nullable=False)
+    id = Column(SmallInteger, primary_key=True, autoincrement=True)
+    code = Column(String(30), unique=True, nullable=False)
     name = Column(String(100), nullable=False)
 
     users = relationship('User', back_populates='role')
