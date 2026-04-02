@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas, auth
 from app.database import get_db
 from pydantic import BaseModel
+from app.services.project_service import create_project_with_tasks, create_project_with_single_task
 
 router = APIRouter(prefix="/projects", tags=["feedback"])
 
@@ -90,3 +91,114 @@ def direct_assign(
     db.add(assignment)
     db.commit()
     return {"success": True, "message": "Волонтёр назначен напрямую"}
+
+
+@router.post("/with-tasks")
+def create_project_and_tasks(
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
+):
+    """
+    Создаёт проект и связанные с ним задачи в одной транзакции.
+
+    Пример тела запроса:
+    {
+        "title": "Новый проект",
+        "description": "Описание проекта",
+        "tasks": [
+            {
+                "title": "Задача 1",
+                "description": "Описание задачи 1",
+                "event_date": "2025-04-15",
+                "location": "Москва",
+                "needed_people": 3
+            },
+            {
+                "title": "Задача 2",
+                "description": "Описание задачи 2",
+                "event_date": "2025-04-16",
+                "location": "СПб",
+                "needed_people": 2
+            }
+        ]
+    }
+    """
+    try:
+        title = data.get("title")
+        description = data.get("description")
+        tasks_data = data.get("tasks", [])
+
+        if not title:
+            raise HTTPException(status_code=400, detail="Название проекта обязательно")
+
+        if not tasks_data:
+            raise HTTPException(status_code=400, detail="Нужно добавить хотя бы одну задачу")
+
+        project = create_project_with_tasks(
+            db=db,
+            title=title,
+            description=description,
+            created_by=current_user.id,
+            tasks_data=tasks_data
+        )
+
+        return {
+            "success": True,
+            "message": f"Проект '{title}' и {len(tasks_data)} задач созданы",
+            "project_id": project.id,
+            "project_title": project.title
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/with-single-task")
+def create_project_with_one_task(
+        data: dict,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(organizer_required)
+):
+    """
+    Создаёт проект и одну задачу в одной транзакции.
+
+    Пример тела запроса:
+    {
+        "project_title": "Новый проект",
+        "project_description": "Описание проекта",
+        "task_title": "Первая задача",
+        "task_description": "Описание задачи",
+        "event_date": "2025-04-15",
+        "location": "Москва"
+    }
+    """
+    try:
+        from datetime import date
+
+        event_date = data.get("event_date")
+        if isinstance(event_date, str):
+            from datetime import datetime
+            event_date = datetime.strptime(event_date, "%Y-%m-%d").date()
+
+        project = create_project_with_single_task(
+            db=db,
+            project_title=data.get("project_title"),
+            project_description=data.get("project_description"),
+            created_by=current_user.id,
+            task_title=data.get("task_title"),
+            task_description=data.get("task_description"),
+            event_date=event_date,
+            location=data.get("location")
+        )
+
+        return {
+            "success": True,
+            "message": f"Проект '{project.title}' и задача созданы",
+            "project_id": project.id
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

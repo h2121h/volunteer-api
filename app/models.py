@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import INET
 from app.database import Base
+import enum
 
 
 # ─── Many-to-many: user_skills ───────────────────────────────────────────────
@@ -164,7 +165,7 @@ class TaskApplication(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     task_id = Column(BigInteger, ForeignKey('tasks.id', ondelete='CASCADE'))
     user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
-    status = Column(String(20), default='pending')
+    status = Column(Enum(ApplicationStatus), default=ApplicationStatus.CREATED)
     message = Column(Text)
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -275,3 +276,9 @@ class Registration(Base):
     status = Column(String(20), default='new')
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     user_id = Column(BigInteger)  # намеренно без FK — соответствует SQL
+
+class ApplicationStatus(str, enum.Enum):
+    CREATED = "created"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
