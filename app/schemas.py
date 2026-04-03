@@ -1,33 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
-from datetime import datetime
-
-
-# Пользователи
-class UserBase(BaseModel):
-    email: EmailStr
-    username: str
-    full_name: Optional[str] = None
-
-
-class UserCreate(UserBase):
-    password: str = Field(..., min_length=4)
-    role_id: Optional[int] = None
-
-
-class UserLogin(BaseModel):
-    username: str
-    password: str
-
-
-class UserResponse(UserBase):
-    id: int
-    role_id: Optional[int]
-    is_active: bool
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
+from typing import Optional
+from datetime import datetime, date
 
 
 class Token(BaseModel):
@@ -36,51 +9,72 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    username: Optional[str] = None
+    email: Optional[str] = None
 
 
-# Задачи
-class TaskBase(BaseModel):
-    title: str
-    description: Optional[str] = None
-    project_id: Optional[int] = None
-    location: Optional[str] = None
-    required_skills: Optional[str] = None
-    status: str = "open"
-    priority: str = "medium"
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=4)
+    name: str
+    role: str = "volunteer"
+    phone: Optional[str] = None
+    city: Optional[str] = None
 
 
-class TaskCreate(TaskBase):
-    pass
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
 
 
-class TaskResponse(TaskBase):
+class UserResponse(BaseModel):
     id: int
-    created_by: int
+    email: EmailStr
+    name: str
+    role_id: Optional[int]
+    is_active: bool
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# Отчеты
-class ReportBase(BaseModel):
-    task_id: int
-    content: str
-    hours_spent: float
-    photos: Optional[str] = None
+class TaskCreate(BaseModel):
+    project_id: int
+    title: str
+    description: Optional[str] = None
+    event_date: date
+    location: Optional[str] = None
+    needed_people: int = 5
 
 
-class ReportCreate(ReportBase):
-    pass
-
-
-class ReportResponse(ReportBase):
+class TaskResponse(BaseModel):
     id: int
-    user_id: int
+    project_id: int
+    title: str
+    description: Optional[str]
+    event_date: date
+    location: Optional[str]
+    needed_people: int
     status: str
+
+    class Config:
+        from_attributes = True
+
+
+class ReportCreate(BaseModel):
+    task_id: int
+    comment: str
+    hours: float
+    photo_url: Optional[str] = None
+
+
+class ReportResponse(BaseModel):
+    id: int
+    assignment_id: int
+    user_id: int
+    comment: Optional[str]
+    hours: Optional[float]
+    is_approved: bool
     submitted_at: datetime
 
     class Config:
