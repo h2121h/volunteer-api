@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app import models
+from app.logger import logger
 
 
 class ApplicationStatus:
@@ -143,3 +144,7 @@ def login_user(db: Session, email: str, password: str) -> dict:
 
     access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+def send_notification(user_id: int, message: str):
+    logger.info(f"[NOTIFICATION] user_id={user_id} message={message}")

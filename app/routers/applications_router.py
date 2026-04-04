@@ -1,21 +1,84 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
+from fastapi import APIRouter, Depends, BackgroundTasks
+from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models
 from app.auth import curator_required, volunteer_required
-from app.services import change_application_status, ApplicationStatus
+from app.services import change_application_status, ApplicationStatus, send_notification
+from app.logger import logger
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
 
+@router.get("/my")
+def get_my_applications(
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required)
+):
+    applications = db.query(models.TaskApplication).options(
+        joinedload(models.TaskApplication.task)
+    ).filter(
+        models.TaskApplication.user_id == current_user.id
+    ).all()
+
+    return [
+        {
+            "id": a.id,
+            "task_id": a.task_id,
+            "task_title": a.task.title if a.task else "Неизвестно",
+            "status": a.status,
+            "message": a.message,
+            "applied_at": a.applied_at
+        }
+        for a in applications
+    ]
+
+
+@router.get("/for-curator")
+def get_applications_for_curator(
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required)
+):
+    applications = db.query(models.TaskApplication).options(
+        joinedload(models.TaskApplication.task),
+        joinedload(models.TaskApplication.user)
+    ).join(
+        models.Task
+    ).join(
+        models.Project
+    ).filter(
+        models.Project.created_by == current_user.id
+    ).all()
+
+    return [
+        {
+            "id": a.id,
+            "task_id": a.task_id,
+            "task_title": a.task.title if a.task else "Неизвестно",
+            "user_id": a.user_id,
+            "user_name": a.user.name if a.user else "Неизвестно",
+            "message": a.message,
+            "applied_at": a.applied_at
+        }
+        for a in applications
+    ]
+
+
 @router.post("/{app_id}/approve")
 def approve(
-    app_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required),
+        app_id: int,
+        background_tasks: BackgroundTasks,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required),
 ):
     application = change_application_status(db, app_id, ApplicationStatus.APPROVED, current_user)
+
+    logger.info(f"[APPROVE] curator={current_user.email} application={app_id}")
+
+    background_tasks.add_task(
+        send_notification,
+        application.user_id,
+        f"Ваша заявка на задачу одобрена!"
+    )
 
     assignment = models.TaskAssignment(
         task_id=application.task_id,
@@ -34,19 +97,22 @@ def approve(
 
 @router.post("/{app_id}/reject")
 def reject(
-    app_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(curator_required),
+        app_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(curator_required),
 ):
     change_application_status(db, app_id, ApplicationStatus.REJECTED, current_user)
+
+    logger.warning(f"[REJECT] curator={current_user.email} application={app_id}")
+
     return {"success": True, "message": "Заявка отклонена"}
 
 
 @router.post("/{app_id}/cancel")
 def cancel(
-    app_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(volunteer_required),
+        app_id: int,
+        db: Session = Depends(get_db),
+        current_user: models.User = Depends(volunteer_required),
 ):
     change_application_status(db, app_id, ApplicationStatus.CANCELLED, current_user)
     return {"success": True, "message": "Заявка отменена"}

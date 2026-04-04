@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, timedelta
 import os
 import uuid
+import time
 from app.database import SessionLocal, engine
 from app import models, schemas
 from app.config import settings
@@ -14,6 +15,7 @@ from app.auth import (
     volunteer_required, organizer_required, curator_required, admin_required,
     decode_token, get_user_by_email
 )
+from app.logger import logger
 from pydantic import BaseModel
 
 app = FastAPI(
@@ -30,6 +32,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+
+    logger.info(
+        f"{request.method} {request.url.path} - "
+        f"Status: {response.status_code} - "
+        f"Duration: {process_time:.3f}s"
+    )
+    return response
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -37,13 +54,16 @@ def get_db():
     finally:
         db.close()
 
+
 @app.get("/")
 def root():
     return {"message": "Волонтёрское API работает", "version": "1.0.0"}
 
+
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
 
 @app.get("/api/roles")
 def get_roles(db: Session = Depends(get_db)):
@@ -56,6 +76,7 @@ def get_roles(db: Session = Depends(get_db)):
         }
         for r in roles
     ]
+
 
 @app.get("/api/stats")
 def get_stats(db: Session = Depends(get_db)):
@@ -76,6 +97,7 @@ def get_stats(db: Session = Depends(get_db)):
         "projects_count": projects_count
     }
 
+
 @app.get("/api/projects")
 def get_projects(db: Session = Depends(get_db)):
     projects = db.query(models.Project).filter(models.Project.status == "active").all()
@@ -88,6 +110,7 @@ def get_projects(db: Session = Depends(get_db)):
         }
         for p in projects
     ]
+
 
 @app.get("/api/tasks")
 def get_tasks(
@@ -112,6 +135,7 @@ def get_tasks(
             "project_id": task.project_id
         })
     return result
+
 
 @app.post("/api/register")
 def register(data: dict, db: Session = Depends(get_db)):
@@ -167,6 +191,7 @@ def register(data: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/login")
 def login(data: dict, db: Session = Depends(get_db)):
     try:
@@ -196,6 +221,7 @@ def login(data: dict, db: Session = Depends(get_db)):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/users/me")
 def get_current_user_info(current_user: models.User = Depends(get_current_active_user)):
     return {
@@ -207,6 +233,7 @@ def get_current_user_info(current_user: models.User = Depends(get_current_active
         "is_active": current_user.is_active,
         "created_at": current_user.created_at
     }
+
 
 @app.post("/api/tasks/{task_id}/apply")
 def apply_to_task(
@@ -243,6 +270,7 @@ def apply_to_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/my-applications")
 def get_my_applications(
         db: Session = Depends(get_db),
@@ -263,6 +291,7 @@ def get_my_applications(
         }
         for a in applications
     ]
+
 
 @app.post("/api/reports/create")
 def create_report(
@@ -304,6 +333,7 @@ def create_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/my-reports")
 def get_my_reports(
         db: Session = Depends(get_db),
@@ -325,6 +355,7 @@ def get_my_reports(
         }
         for r in reports
     ]
+
 
 @app.post("/api/projects/create")
 def create_project(
@@ -348,6 +379,7 @@ def create_project(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
+
 
 @app.post("/api/tasks/create")
 def create_task(
@@ -374,6 +406,7 @@ def create_task(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
+
 
 @app.put("/api/tasks/{task_id}/edit")
 def edit_task(
@@ -405,6 +438,7 @@ def edit_task(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/applications/pending")
 def get_pending_applications(
         db: Session = Depends(get_db),
@@ -426,6 +460,7 @@ def get_pending_applications(
         }
         for a in applications
     ]
+
 
 @app.post("/api/applications/{app_id}/approve")
 def approve_application(
@@ -462,6 +497,7 @@ def approve_application(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/applications/{app_id}/reject")
 def reject_application(
         app_id: int,
@@ -483,6 +519,7 @@ def reject_application(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
+
 
 @app.get("/api/reports/pending")
 def get_pending_reports(
@@ -506,6 +543,7 @@ def get_pending_reports(
         }
         for r in reports
     ]
+
 
 @app.post("/api/reports/{report_id}/approve")
 def approve_report(
@@ -538,6 +576,7 @@ def approve_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.post("/api/reports/{report_id}/reject")
 def reject_report(
         report_id: int,
@@ -560,6 +599,7 @@ def reject_report(
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
 @app.get("/api/admin/users")
 def get_all_users(
         db: Session = Depends(get_db),
@@ -578,6 +618,7 @@ def get_all_users(
         }
         for u in users
     ]
+
 
 @app.post("/api/admin/users/{user_id}/toggle-active")
 def toggle_user_active(
@@ -598,6 +639,7 @@ def toggle_user_active(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
+
 
 @app.post("/api/admin/users/{user_id}/change-role")
 def change_user_role(
@@ -623,6 +665,7 @@ def change_user_role(
 
     except Exception as e:
         return {"success": False, "message": str(e)}
+
 
 @app.get("/api/admin/stats")
 def admin_stats(
@@ -653,7 +696,7 @@ def admin_stats(
         "reports_pending": db.query(models.TaskReport).filter(models.TaskReport.is_approved == False).count()
     }
 
-# ==================== AUTH REFRESH ====================
+
 @app.post("/auth/refresh", response_model=schemas.Token)
 def refresh_token(
         refresh_token: str,
@@ -676,9 +719,10 @@ def refresh_token(
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-# ==================== DOCUMENTS ====================
+
 UPLOAD_DIR = "media/documents"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 
 @app.post("/documents/upload")
 async def upload_document(
@@ -711,6 +755,7 @@ async def upload_document(
 
     return {"success": True, "id": doc.id, "file_url": doc.file_url}
 
+
 @app.post("/documents/{doc_id}/verify")
 def verify_document(
         doc_id: int,
@@ -727,7 +772,7 @@ def verify_document(
     db.commit()
     return {"success": True, "message": "Документ верифицирован"}
 
-# ==================== ANALYTICS ====================
+
 @app.get("/analytics/summary")
 def get_analytics_summary(
         db: Session = Depends(get_db),
@@ -747,10 +792,11 @@ def get_analytics_summary(
         "avg_hours_per_task": float(avg_hours)
     }
 
-# ==================== PROJECTS FEEDBACK ====================
+
 class FeedbackCreate(BaseModel):
     rating: int
     comment: str
+
 
 @app.post("/projects/{project_id}/feedback")
 def create_feedback(
@@ -773,7 +819,7 @@ def create_feedback(
     db.commit()
     return {"success": True, "message": "Отзыв добавлен"}
 
-# ==================== DIRECT ASSIGN ====================
+
 @app.post("/tasks/{task_id}/assign/{user_id}")
 def direct_assign(
         task_id: int,
@@ -807,9 +853,10 @@ def direct_assign(
     db.commit()
     return {"success": True, "message": "Волонтёр назначен напрямую"}
 
-# ==================== REPORTS WITH PHOTOS ====================
+
 REPORTS_UPLOAD_DIR = "media/reports"
 os.makedirs(REPORTS_UPLOAD_DIR, exist_ok=True)
+
 
 @app.post("/reports/")
 async def create_report_with_photos(
@@ -850,7 +897,7 @@ async def create_report_with_photos(
     db.commit()
     return {"success": True, "id": report.id, "message": "Отчёт отправлен"}
 
-# ==================== ПОДКЛЮЧЕНИЕ НОВЫХ РОУТЕРОВ ====================
+
 from app.routers import applications_router, auth_router, projects_router
 
 app.include_router(applications_router.router)
