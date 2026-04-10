@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models
@@ -66,7 +66,6 @@ def get_applications_for_curator(
 @router.post("/{app_id}/approve")
 def approve(
         app_id: int,
-        background_tasks: BackgroundTasks,
         db: Session = Depends(get_db),
         current_user: models.User = Depends(curator_required),
 ):
@@ -74,8 +73,8 @@ def approve(
 
     logger.info(f"[APPROVE] curator={current_user.email} application={app_id}")
 
-    background_tasks.add_task(
-        send_notification,
+    # Отправка уведомления через Celery (асинхронно, через очередь)
+    task_id = send_notification(
         application.user_id,
         f"Ваша заявка на задачу одобрена!"
     )
@@ -92,7 +91,11 @@ def approve(
     db.add(assignment)
     db.commit()
 
-    return {"success": True, "message": "Заявка одобрена, волонтёр назначен"}
+    return {
+        "success": True,
+        "message": "Заявка одобрена, волонтёр назначен",
+        "notification_task_id": task_id  # Возвращаем ID задачи для отслеживания
+    }
 
 
 @router.post("/{app_id}/reject")
@@ -116,3 +119,21 @@ def cancel(
 ):
     change_application_status(db, app_id, ApplicationStatus.CANCELLED, current_user)
     return {"success": True, "message": "Заявка отменена"}
+
+
+@router.get("/task/{task_id}")
+def get_task_status(
+        task_id: str,
+):
+    """
+    Проверка статуса фоновой задачи (для отслеживания)
+    """
+    from celery.result import AsyncResult
+    from app.celery_worker import celery_app
+
+    result = AsyncResult(task_id, app=celery_app)
+    return {
+        "task_id": task_id,
+        "status": result.status,
+        "result": result.result if result.ready() else None
+    }
