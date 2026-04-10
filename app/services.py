@@ -2,8 +2,16 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 from app import models
 from app.logger import logger
-from app.celery_worker import send_notification_task
-import uuid
+
+# Celery — опционально, если не установлен — не падаем
+try:
+    from app.celery_worker import send_notification_task
+    CELERY_AVAILABLE = True
+except ImportError:
+    CELERY_AVAILABLE = False
+    def send_notification_task(*args, **kwargs):
+        logger.warning("[CELERY] Celery не установлен, уведомление не отправлено")
+        return None
 
 
 class ApplicationStatus:
@@ -150,8 +158,12 @@ def login_user(db: Session, email: str, password: str) -> dict:
 
 def send_notification(user_id: int, message: str):
     """
-    Отправка уведомления через Celery (асинхронно)
+    Отправка уведомления через Celery (асинхронно, если Celery доступен)
     """
-    task = send_notification_task.delay(user_id, message)
-    logger.info(f"[NOTIFICATION_QUEUED] user_id={user_id} message={message} task_id={task.id}")
-    return task.id
+    if CELERY_AVAILABLE and send_notification_task:
+        task = send_notification_task.delay(user_id, message)
+        logger.info(f"[NOTIFICATION_QUEUED] user_id={user_id} message={message} task_id={task.id}")
+        return task.id
+    else:
+        logger.info(f"[NOTIFICATION] (без очереди) user_id={user_id} message={message}")
+        return None
