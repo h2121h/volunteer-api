@@ -78,7 +78,7 @@ app.include_router(admin.router)
 app.include_router(stats.router)
 
 # ── BFF роутеры ───────────────────────────────────────────────────────────────
-from app import bff_desktop, bff_web, bff_mobile
+from app.routers import bff_desktop, bff_web, bff_mobile
 
 app.include_router(bff_desktop.router)   # GET /bff/desktop/*
 app.include_router(bff_web.router)       # GET /bff/web/*
