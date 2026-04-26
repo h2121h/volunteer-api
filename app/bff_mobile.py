@@ -1,14 +1,8 @@
 """
-BFF (Backend for Frontend) — Mobile клиент (Kivy, волонтёр).
-
-Агрегирует данные специально для мобильного приложения:
-- Один запрос вместо четырёх
-- Только нужные поля (меньше трафика)
-- Данные отфильтрованы по текущему волонтёру
+BFF Mobile — с защитой от отсутствующих таблиц.
 """
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 from app import models, auth
 from app.database import get_db
 from app.logger import logger
@@ -21,108 +15,112 @@ def mobile_dashboard(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.volunteer_required),
 ):
-    """
-    Один запрос вместо четырёх — Mobile получает всё нужное сразу.
-    tasks + my_applications + stats + my_reports
-    """
     try:
-        # Все открытые задачи с проектами
-        tasks = db.query(models.Task).filter(
+        user_id = current_user.id
+
+        # 1. Открытые задачи
+        tasks_q = db.query(models.Task).filter(
             models.Task.status == "open"
-        ).options(
-            joinedload(models.Task.project)
         ).all()
 
-        # Свои заявки (используем реальные статусы: pending/approved/rejected)
-        applications = db.query(models.TaskApplication).filter(
-            models.TaskApplication.user_id == current_user.id
-        ).all()
+        # 2. Проекты для задач
+        project_ids = list({t.project_id for t in tasks_q if t.project_id})
+        projects = {}
+        if project_ids:
+            for p in db.query(models.Project).filter(
+                models.Project.id.in_(project_ids)
+            ).all():
+                projects[p.id] = p.title
 
-        # Назначения волонтёра (через TaskAssignment)
-        assignments = db.query(models.TaskAssignment).filter(
-            models.TaskAssignment.user_id == current_user.id
+        # 3. Мои заявки
+        my_apps = db.query(models.TaskApplication).filter(
+            models.TaskApplication.user_id == user_id
         ).all()
-        assignment_ids = {a.id for a in assignments}
+        applied_ids = {a.task_id for a in my_apps}
 
-        # Свои отчёты через assignment
-        reports = []
-        if assignment_ids:
-            reports = db.query(models.TaskReport).filter(
-                models.TaskReport.assignment_id.in_(assignment_ids)
+        # 4. Отчёты — таблица может не существовать
+        my_reports    = []
+        total_hours   = 0.0
+        total_points  = 0
+        pending_cnt   = 0
+        try:
+            my_assignments = db.query(models.TaskAssignment).filter(
+                models.TaskAssignment.user_id == user_id
             ).all()
-
-        approved_reports = [r for r in reports if r.is_approved]
-        pending_reports  = [r for r in reports if not r.is_approved]
-
-        # Баллы: 10 баллов за каждый одобренный час (BR-09)
-        total_hours  = sum(float(r.hours or 0) for r in approved_reports)
-        total_points = int(total_hours * 10)
-
-        # ID задач на которые уже записан
-        applied_task_ids = {a.task_id for a in applications}
+            if my_assignments:
+                asgn_ids   = [a.id for a in my_assignments]
+                my_reports = db.query(models.TaskReport).filter(
+                    models.TaskReport.assignment_id.in_(asgn_ids)
+                ).all()
+                for r in my_reports:
+                    h = float(r.hours or 0)
+                    if r.is_approved:
+                        total_hours  += h
+                        total_points += int(h * 10)
+                    else:
+                        pending_cnt += 1
+        except Exception as report_err:
+            # Таблица task_reports или task_assignments ещё не создана
+            logger.warning(f"[BFF_MOBILE] reports skipped: {report_err}")
+            my_reports = []
 
         logger.info(
-            f"[BFF_MOBILE] dashboard: user={current_user.email} "
-            f"tasks={len(tasks)} apps={len(applications)} "
-            f"points={total_points}"
+            f"[BFF_MOBILE] user={current_user.email} "
+            f"tasks={len(tasks_q)} apps={len(my_apps)} points={total_points}"
         )
 
         return {
             "user": {
-                "id":    current_user.id,
-                "name":  current_user.name,
+                "id":    user_id,
+                "name":  current_user.name or "",
                 "email": current_user.email,
-                "city":  getattr(current_user, 'city', None),
+                "city":  current_user.city if hasattr(current_user, 'city') else None,
             },
-            # Задачи с пометкой — записан или нет
             "tasks": [
                 {
                     "id":              t.id,
-                    "title":           t.title,
-                    "description":     t.description,
+                    "title":           t.title or "",
+                    "description":     t.description or "",
                     "event_date":      str(t.event_date) if t.event_date else None,
-                    "location":        t.location,
-                    "needed_people":   t.needed_people,
-                    "status":          t.status,
-                    "project":         t.project.title if t.project else None,
-                    "already_applied": t.id in applied_task_ids,
+                    "location":        t.location or "",
+                    "needed_people":   t.needed_people or 0,
+                    "status":          t.status or "open",
+                    "project":         projects.get(t.project_id, ""),
+                    "already_applied": t.id in applied_ids,
                 }
-                for t in tasks
+                for t in tasks_q
             ],
-            # Свои заявки с реальными статусами
             "my_applications": [
                 {
                     "id":         a.id,
                     "task_id":    a.task_id,
-                    "status":     a.status,
+                    "status":     a.status or "pending",
                     "applied_at": str(a.applied_at) if a.applied_at else None,
                 }
-                for a in applications
+                for a in my_apps
             ],
-            # Статистика
             "stats": {
-                "tasks_done":      len(approved_reports),
+                "tasks_done":      len([r for r in my_reports if r.is_approved]),
                 "total_hours":     round(total_hours, 1),
                 "total_points":    total_points,
-                "pending_reports": len(pending_reports),
+                "pending_reports": pending_cnt,
             },
-            # Отчёты
             "my_reports": [
                 {
                     "id":          r.id,
                     "hours":       float(r.hours or 0),
-                    "comment":     r.comment,
-                    "is_approved": r.is_approved,
+                    "comment":     r.comment or "",
+                    "is_approved": bool(r.is_approved),
                     "status":      "approved" if r.is_approved else "pending",
                     "points":      int(float(r.hours or 0) * 10) if r.is_approved else 0,
                 }
-                for r in reports
+                for r in my_reports
             ],
         }
 
     except Exception as e:
-        logger.error(f"[BFF_MOBILE] dashboard error: {e}")
-        raise
+        logger.error(f"[BFF_MOBILE] ERROR: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/apply/{task_id}")
@@ -131,66 +129,58 @@ def mobile_apply(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.volunteer_required),
 ):
-    """
-    Запись на задачу через Mobile BFF.
-    BR-01: лимит участников.
-    BR-05: конфликт расписания.
-    """
-    task = db.query(models.Task).filter(models.Task.id == task_id).first()
-    if not task:
-        return {"success": False, "message": "Задача не найдена"}
+    try:
+        task = db.query(models.Task).filter(models.Task.id == task_id).first()
+        if not task:
+            return {"success": False, "message": "Задача не найдена"}
+        if task.status != "open":
+            return {"success": False, "message": "Задача недоступна"}
 
-    if task.status != "open":
-        return {"success": False, "message": "Задача недоступна для записи"}
+        # BR-01
+        count = db.query(models.TaskApplication).filter(
+            models.TaskApplication.task_id == task_id,
+            models.TaskApplication.status.in_(["pending", "approved"]),
+        ).count()
+        if count >= (task.needed_people or 999):
+            return {"success": False, "code": "BR-01",
+                    "message": "BR-01: достигнут лимит участников"}
 
-    # BR-01: лимит участников
-    # Статусы: pending (ожидает), approved (одобрена)
-    count = db.query(models.TaskApplication).filter(
-        models.TaskApplication.task_id == task_id,
-        models.TaskApplication.status.in_(["pending", "approved"]),
-    ).count()
-    if count >= task.needed_people:
+        # BR-05
+        if task.event_date:
+            conflict = db.query(models.TaskApplication).join(
+                models.Task, models.TaskApplication.task_id == models.Task.id
+            ).filter(
+                models.TaskApplication.user_id == current_user.id,
+                models.TaskApplication.status.in_(["pending", "approved"]),
+                models.Task.event_date == task.event_date,
+                models.Task.id != task_id,
+            ).first()
+            if conflict:
+                return {"success": False, "code": "BR-05",
+                        "message": "BR-05: конфликт расписания"}
+
+        existing = db.query(models.TaskApplication).filter(
+            models.TaskApplication.task_id == task_id,
+            models.TaskApplication.user_id == current_user.id,
+        ).first()
+        if existing:
+            return {"success": False, "message": "Вы уже подали заявку"}
+
+        app = models.TaskApplication(
+            task_id=task_id,
+            user_id=current_user.id,
+            message="Хочу помочь!",
+            status="pending",
+        )
+        db.add(app)
+        db.commit()
+
         return {
-            "success": False,
-            "message": "BR-01: достигнут лимит участников",
-            "code": "BR-01",
+            "success": True,
+            "message": "Заявка подана! Ожидайте одобрения куратора",
+            "application_id": app.id,
         }
 
-    # BR-05: конфликт расписания
-    conflict = db.query(models.TaskApplication).join(models.Task).filter(
-        models.TaskApplication.user_id == current_user.id,
-        models.TaskApplication.status.in_(["pending", "approved"]),
-        models.Task.event_date == task.event_date,
-        models.Task.id != task_id,
-    ).first()
-    if conflict:
-        return {
-            "success": False,
-            "message": "BR-05: конфликт расписания с другой задачей",
-            "code": "BR-05",
-        }
-
-    # Уже записан?
-    existing = db.query(models.TaskApplication).filter(
-        models.TaskApplication.task_id == task_id,
-        models.TaskApplication.user_id == current_user.id,
-    ).first()
-    if existing:
-        return {"success": False, "message": "Вы уже подали заявку"}
-
-    application = models.TaskApplication(
-        task_id=task_id,
-        user_id=current_user.id,
-        message="Хочу помочь!",
-        status="pending",
-    )
-    db.add(application)
-    db.commit()
-
-    logger.info(f"[BFF_MOBILE] apply: user={current_user.email} task={task_id}")
-
-    return {
-        "success": True,
-        "message": "Заявка подана! Ожидайте одобрения куратора",
-        "application_id": application.id,
-    }
+    except Exception as e:
+        logger.error(f"[BFF_MOBILE] apply ERROR: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
