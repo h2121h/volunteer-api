@@ -1,6 +1,3 @@
-"""
-BFF Mobile — с защитой от отсутствующих таблиц.
-"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app import models, auth
@@ -23,7 +20,7 @@ def mobile_dashboard(
             models.Task.status == "open"
         ).all()
 
-        # 2. Проекты для задач
+        # 2. Проекты
         project_ids = list({t.project_id for t in tasks_q if t.project_id})
         projects = {}
         if project_ids:
@@ -38,11 +35,13 @@ def mobile_dashboard(
         ).all()
         applied_ids = {a.task_id for a in my_apps}
 
-        # 4. Отчёты — таблица может не существовать
-        my_reports    = []
-        total_hours   = 0.0
-        total_points  = 0
-        pending_cnt   = 0
+        # 4. Отчёты — таблицы могут не существовать
+        #    ВАЖНО: rollback после ошибки — иначе вся сессия в ABORTED
+        my_reports   = []
+        total_hours  = 0.0
+        total_points = 0
+        pending_cnt  = 0
+
         try:
             my_assignments = db.query(models.TaskAssignment).filter(
                 models.TaskAssignment.user_id == user_id
@@ -59,14 +58,14 @@ def mobile_dashboard(
                         total_points += int(h * 10)
                     else:
                         pending_cnt += 1
-        except Exception as report_err:
-            # Таблица task_reports или task_assignments ещё не создана
-            logger.warning(f"[BFF_MOBILE] reports skipped: {report_err}")
+        except Exception as e:
+            logger.warning(f"[BFF_MOBILE] reports skipped (table missing?): {e}")
+            db.rollback()   # ← сброс ABORTED транзакции
             my_reports = []
 
         logger.info(
-            f"[BFF_MOBILE] user={current_user.email} "
-            f"tasks={len(tasks_q)} apps={len(my_apps)} points={total_points}"
+            f"[BFF_MOBILE] OK user={current_user.email} "
+            f"tasks={len(tasks_q)} apps={len(my_apps)} pts={total_points}"
         )
 
         return {
@@ -119,7 +118,7 @@ def mobile_dashboard(
         }
 
     except Exception as e:
-        logger.error(f"[BFF_MOBILE] ERROR: {type(e).__name__}: {e}")
+        logger.error(f"[BFF_MOBILE] FATAL: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
