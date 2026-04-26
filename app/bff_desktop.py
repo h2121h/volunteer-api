@@ -106,6 +106,7 @@ def desktop_dashboard(
                 "name":      u.name,
                 "email":     u.email,
                 "city":      u.city,
+                "role":      u.role.code if u.role else "volunteer",
                 "is_active": u.is_active,
             }
             for u in volunteers
@@ -123,20 +124,29 @@ def desktop_dashboard(
         "applications": [
             {
                 "id":         a.id,
+                "task_id":    a.task_id,
                 "task_title": a.task.title if a.task else "—",
+                "user_id":    a.user_id,
                 "user_name":  a.user.name if a.user else "—",
+                "email":      a.user.email if a.user else "—",
+                "message":    a.message,
                 "status":     a.status,
+                "applied_at": str(a.applied_at) if a.applied_at else None,
             }
             for a in applications
         ],
         # Все отчёты
         "reports": [
             {
-                "id":          r.id,
-                "user_name":   r.user.name if r.user else "—",
-                "hours":       float(r.hours or 0),
-                "is_approved": r.is_approved,
-                "comment":     r.comment,
+                "id":           r.id,
+                "user_id":      r.user_id,
+                "user_name":    r.user.name if r.user else "—",
+                "task_id":      r.assignment.task_id if r.assignment else None,
+                "hours":        float(r.hours or 0),
+                "is_approved":  r.is_approved,
+                "comment":      r.comment,
+                "photo_url":    r.photo_url,
+                "submitted_at": str(r.submitted_at) if r.submitted_at else None,
             }
             for r in reports
         ],
