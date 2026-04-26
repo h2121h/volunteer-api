@@ -55,17 +55,25 @@ def get_db():
 
 
 # ── Существующие роутеры ──────────────────────────────────────────────────────
-from app.routers import (
-    applications_router,
-    auth_router,
-    projects_router,
-    checkins,
-    tasks_extra,
-    reports_router,
-    projects_api,
-    admin,
-    stats,
-)
+# Пробуем оба варианта названия папки роутеров
+try:
+    from app.routers import (
+        applications_router, auth_router, projects_router,
+        checkins, tasks_extra, reports_router,
+        projects_api, admin, stats,
+    )
+except ModuleNotFoundError:
+    import importlib
+    _r = "app.маршрутизаторы"
+    applications_router = importlib.import_module(f"{_r}.applications_router")
+    auth_router         = importlib.import_module(f"{_r}.auth_router")
+    projects_router     = importlib.import_module(f"{_r}.projects_router")
+    checkins            = importlib.import_module(f"{_r}.checkins")
+    tasks_extra         = importlib.import_module(f"{_r}.tasks_extra")
+    reports_router      = importlib.import_module(f"{_r}.reports_router")
+    projects_api        = importlib.import_module(f"{_r}.projects_api")
+    admin               = importlib.import_module(f"{_r}.admin")
+    stats               = importlib.import_module(f"{_r}.stats")
 
 app.include_router(applications_router.router)
 app.include_router(auth_router.router)
@@ -78,7 +86,7 @@ app.include_router(admin.router)
 app.include_router(stats.router)
 
 # ── BFF роутеры ───────────────────────────────────────────────────────────────
-from app.routers import bff_desktop, bff_web, bff_mobile
+from app import bff_desktop, bff_web, bff_mobile
 
 app.include_router(bff_desktop.router)   # GET /bff/desktop/*
 app.include_router(bff_web.router)       # GET /bff/web/*
