@@ -1,4 +1,3 @@
-
 CREATE TABLE roles (
     id          SMALLSERIAL PRIMARY KEY,
     code        VARCHAR(30) UNIQUE NOT NULL,  
@@ -8,6 +7,8 @@ CREATE TABLE roles (
 INSERT INTO roles (code, name) VALUES
 ('volunteer',   'Волонтёр'),
 ('coordinator', 'Координатор волонтёров'),
+('organizer',   'Организатор'),
+('curator',     'Куратор'),
 ('manager',     'Менеджер социальных проектов'),
 ('admin',       'Администратор системы'),
 ('it_support',  'IT-специалист');
@@ -37,7 +38,7 @@ CREATE TABLE logins (
     ip          INET,
     user_agent  TEXT,
     success     BOOLEAN NOT NULL,
-    reason      VARCHAR(80),           
+    reason      VARCHAR(80),
     happened_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -46,9 +47,9 @@ CREATE TABLE logins (
 CREATE TABLE volunteer_documents (
     id              BIGSERIAL PRIMARY KEY,
     user_id         BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    doc_type        VARCHAR(80) NOT NULL,      
+    doc_type        VARCHAR(80) NOT NULL,
     file_url        TEXT NOT NULL,
-    status          VARCHAR(20) DEFAULT 'new', 
+    status          VARCHAR(20) DEFAULT 'new',
     uploaded_at     TIMESTAMPTZ DEFAULT NOW(),
     verified_at     TIMESTAMPTZ,
     verified_by     BIGINT REFERENCES users(id)
@@ -60,13 +61,14 @@ CREATE TABLE projects (
     id              BIGSERIAL PRIMARY KEY,
     title           VARCHAR(200) NOT NULL,
     description     TEXT,
-    status          VARCHAR(20) DEFAULT 'active', 
+    status          VARCHAR(20) DEFAULT 'active',
     created_by      BIGINT REFERENCES users(id),
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
 
 
+-- ✅ ОБНОВЛЕНО: добавлены difficulty, category, lat, lng
 CREATE TABLE tasks (
     id              BIGSERIAL PRIMARY KEY,
     project_id      BIGINT REFERENCES projects(id) ON DELETE CASCADE,
@@ -75,7 +77,11 @@ CREATE TABLE tasks (
     event_date      DATE NOT NULL,
     location        VARCHAR(150),
     needed_people   SMALLINT DEFAULT 5,
-    status          VARCHAR(20) DEFAULT 'open'    
+    status          VARCHAR(20) DEFAULT 'open',
+    difficulty      VARCHAR(20) DEFAULT 'medium', -- easy / medium / hard
+    category        VARCHAR(50) DEFAULT 'other',  -- ecology / children / elderly / animals / other
+    lat             FLOAT,                         -- координаты для фильтра "рядом"
+    lng             FLOAT
 );
 
 
@@ -84,7 +90,7 @@ CREATE TABLE task_applications (
     id          BIGSERIAL PRIMARY KEY,
     task_id     BIGINT REFERENCES tasks(id) ON DELETE CASCADE,
     user_id     BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    status      VARCHAR(20) DEFAULT 'pending', 
+    status      VARCHAR(20) DEFAULT 'pending',
     message     TEXT,
     applied_at  TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(task_id, user_id)
@@ -98,8 +104,9 @@ CREATE TABLE task_assignments (
     user_id     BIGINT REFERENCES users(id) ON DELETE CASCADE,
     assigned_at TIMESTAMPTZ DEFAULT NOW(),
     assigned_by BIGINT REFERENCES users(id),
-    status      VARCHAR(20) DEFAULT 'assigned' 
+    status      VARCHAR(20) DEFAULT 'assigned'
 );
+
 
 
 CREATE TABLE task_reports (
@@ -140,26 +147,46 @@ CREATE TABLE user_skills (
 
 
 CREATE TABLE backups (
-    id          BIGSERIAL PRIMARY KEY,
+    id           BIGSERIAL PRIMARY KEY,
     performed_by BIGINT REFERENCES users(id),
     backup_date  TIMESTAMPTZ DEFAULT NOW(),
     file_path    TEXT,
     size_mb      INTEGER,
-    status       VARCHAR(20) DEFAULT 'success' 
+    status       VARCHAR(20) DEFAULT 'success'
 );
 
 CREATE TABLE registration (
-    id          BIGSERIAL PRIMARY KEY,
-    email       VARCHAR(180) UNIQUE NOT NULL,
-    token       VARCHAR(100),              
-    status      VARCHAR(20) DEFAULT 'new', 
-    created_at  TIMESTAMPTZ DEFAULT NOW(),
-    user_id     BIGINT                      
+    id         BIGSERIAL PRIMARY KEY,
+    email      VARCHAR(180) UNIQUE NOT NULL,
+    token      VARCHAR(100),
+    status     VARCHAR(20) DEFAULT 'new',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    user_id    BIGINT
 );
 
-CREATE INDEX idx_users_role        ON users(role_id);
-CREATE INDEX idx_logins_email      ON logins(email, happened_at DESC);
-CREATE INDEX idx_tasks_date        ON tasks(event_date);
-CREATE INDEX idx_applications_task ON task_applications(task_id, status);
-CREATE INDEX idx_assignments_task  ON task_assignments(task_id);
+
+
+-- ✅ НОВАЯ: Domain Events лог (для CQRS / 4.3)
+CREATE TABLE domain_events (
+    id         BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(80) NOT NULL,
+    payload    JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by BIGINT REFERENCES users(id)
+);
+
+
+
+-- Индексы
+CREATE INDEX idx_users_role         ON users(role_id);
+CREATE INDEX idx_logins_email       ON logins(email, happened_at DESC);
+CREATE INDEX idx_tasks_date         ON tasks(event_date);
+CREATE INDEX idx_tasks_status       ON tasks(status);
+CREATE INDEX idx_tasks_difficulty   ON tasks(difficulty);
+CREATE INDEX idx_tasks_category     ON tasks(category);
+CREATE INDEX idx_applications_task  ON task_applications(task_id, status);
+CREATE INDEX idx_assignments_task   ON task_assignments(task_id);
+CREATE INDEX idx_assignments_user   ON task_assignments(user_id);
 CREATE INDEX idx_reports_assignment ON task_reports(assignment_id);
+CREATE INDEX idx_reports_user       ON task_reports(user_id);
+CREATE INDEX idx_events_type        ON domain_events(event_type, created_at DESC);
