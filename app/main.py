@@ -18,6 +18,11 @@ from app.auth import (
 )
 from app.logger import logger
 from pydantic import BaseModel
+from app.security import (
+    RegisterDTO, LoginDTO, CreateProjectDTO,
+    CreateTaskDTO, ApplyTaskDTO, sanitize_string
+)
+from app.middleware import setup_security, limiter
 
 app = FastAPI(
     title="Волонтёрское API",
@@ -25,13 +30,8 @@ app = FastAPI(
     version="2.0.0"
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Безопасность: Rate Limiting, CORS (только свои домены), Security Headers
+setup_security(app)
 
 
 @app.middleware("http")
@@ -229,16 +229,22 @@ def get_tasks(db: Session = Depends(get_db), status: Optional[str] = None):
 
 
 @app.post("/api/register")
-def register(data: dict, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")   # Rate limiting: max 5 регистраций в минуту
+def register(request: Request, data: RegisterDTO, db: Session = Depends(get_db)):
+    """
+    Регистрация с полной валидацией (DTO):
+    - email формат проверяется
+    - пароль мин 8 символов + цифры
+    - XSS: имя/город экранируются
+    - Mass Assignment: нельзя передать role_id/is_active напрямую
+    """
     try:
-        email     = data.get("email")
-        password  = data.get("password")
-        name      = data.get("name", email.split('@')[0])
-        phone     = data.get("phone", None)
-        city      = data.get("city", None)
-        role_code = data.get("role", "volunteer")
-        if not email or not password:
-            return {"success": False, "message": "Email и пароль обязательны"}
+        email     = data.email
+        password  = data.password
+        name      = data.name
+        phone     = data.phone
+        city      = data.city
+        role_code = data.role   # только volunteer/organizer/curator — из DTO
         existing_user = db.query(models.User).filter(models.User.email == email).first()
         if existing_user:
             return {"success": False, "message": "Пользователь уже существует"}
@@ -262,10 +268,11 @@ def register(data: dict, db: Session = Depends(get_db)):
 
 
 @app.post("/api/login")
-def login(data: dict, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")   # Rate limiting: max 10 попыток в минуту
+def login(request: Request, data: LoginDTO, db: Session = Depends(get_db)):
     try:
-        email    = data.get("email")
-        password = data.get("password")
+        email    = data.email
+        password = data.password
         user     = authenticate_user(db, email, password)
         if not user:
             return {"success": False, "message": "Неверный email или пароль"}
@@ -379,7 +386,7 @@ def get_my_reports(
 
 @app.post("/api/projects/create")
 def create_project(
-    data: dict,
+    data: CreateProjectDTO,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(organizer_required)
 ):
@@ -398,7 +405,7 @@ def create_project(
 
 @app.post("/api/tasks/create")
 def create_task(
-    data: dict,
+    data: CreateTaskDTO,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(organizer_required)
 ):
@@ -871,3 +878,26 @@ def apply_task_simple(
     except Exception as e:
         logger.error(f"[APPLY] error: {e}")
         return {"success": False, "message": str(e)}
+
+@app.get("/api/users")
+def get_all_users_organizer(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Список всех пользователей — для организатора, куратора, админа."""
+    role_code = current_user.role.code if current_user.role else ''
+    if role_code not in ('organizer', 'curator', 'admin'):
+        raise HTTPException(status_code=403, detail="Нет доступа")
+    users = db.query(models.User).all()
+    return [
+        {
+            "id":        u.id,
+            "email":     u.email,
+            "name":      u.name or "",
+            "city":      u.city if hasattr(u, 'city') else "",
+            "role":      u.role.code if u.role else "volunteer",
+            "role_name": u.role.name if u.role else "Волонтёр",
+            "is_active": bool(u.is_active),
+        }
+        for u in users
+    ]
