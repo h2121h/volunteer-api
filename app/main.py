@@ -55,25 +55,17 @@ def get_db():
 
 
 # ── Существующие роутеры ──────────────────────────────────────────────────────
-# Пробуем оба варианта названия папки роутеров
-try:
-    from app.routers import (
-        applications_router, auth_router, projects_router,
-        checkins, tasks_extra, reports_router,
-        projects_api, admin, stats,
-    )
-except ModuleNotFoundError:
-    import importlib
-    _r = "app.маршрутизаторы"
-    applications_router = importlib.import_module(f"{_r}.applications_router")
-    auth_router         = importlib.import_module(f"{_r}.auth_router")
-    projects_router     = importlib.import_module(f"{_r}.projects_router")
-    checkins            = importlib.import_module(f"{_r}.checkins")
-    tasks_extra         = importlib.import_module(f"{_r}.tasks_extra")
-    reports_router      = importlib.import_module(f"{_r}.reports_router")
-    projects_api        = importlib.import_module(f"{_r}.projects_api")
-    admin               = importlib.import_module(f"{_r}.admin")
-    stats               = importlib.import_module(f"{_r}.stats")
+from app.routers import (
+    applications_router,
+    auth_router,
+    projects_router,
+    checkins,
+    tasks_extra,
+    reports_router,
+    projects_api,
+    admin,
+    stats,
+)
 
 app.include_router(applications_router.router)
 app.include_router(auth_router.router)
@@ -118,6 +110,60 @@ except Exception:
 # ── Domain Events subscriber (запускается при старте) ─────────────────────────
 @app.on_event("startup")
 async def startup():
+    # Создаём недостающие таблицы при каждом старте
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS task_assignments (
+                    id          BIGSERIAL PRIMARY KEY,
+                    task_id     BIGINT REFERENCES tasks(id) ON DELETE CASCADE,
+                    user_id     BIGINT REFERENCES users(id) ON DELETE CASCADE,
+                    assigned_at TIMESTAMPTZ DEFAULT NOW(),
+                    assigned_by BIGINT REFERENCES users(id),
+                    status      VARCHAR(20) DEFAULT 'assigned'
+                );
+                CREATE INDEX IF NOT EXISTS idx_asgn_task ON task_assignments(task_id);
+                CREATE INDEX IF NOT EXISTS idx_asgn_user ON task_assignments(user_id);
+
+                CREATE TABLE IF NOT EXISTS task_reports (
+                    id            BIGSERIAL PRIMARY KEY,
+                    assignment_id BIGINT REFERENCES task_assignments(id) ON DELETE CASCADE,
+                    user_id       BIGINT REFERENCES users(id),
+                    hours         NUMERIC(5,2),
+                    comment       TEXT,
+                    photo_url     TEXT,
+                    submitted_at  TIMESTAMPTZ DEFAULT NOW(),
+                    is_approved   BOOLEAN DEFAULT FALSE
+                );
+                CREATE INDEX IF NOT EXISTS idx_rep_asgn ON task_reports(assignment_id);
+                CREATE INDEX IF NOT EXISTS idx_rep_user ON task_reports(user_id);
+
+                CREATE TABLE IF NOT EXISTS volunteer_documents (
+                    id          BIGSERIAL PRIMARY KEY,
+                    user_id     BIGINT REFERENCES users(id) ON DELETE CASCADE,
+                    doc_type    VARCHAR(50),
+                    file_url    TEXT,
+                    status      VARCHAR(20) DEFAULT 'new',
+                    verified_at TIMESTAMPTZ,
+                    verified_by BIGINT REFERENCES users(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS project_feedback (
+                    id         BIGSERIAL PRIMARY KEY,
+                    project_id BIGINT REFERENCES projects(id) ON DELETE CASCADE,
+                    user_id    BIGINT REFERENCES users(id),
+                    rating     SMALLINT,
+                    comment    TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """))
+            conn.commit()
+        logger.info("[APP] Database tables ensured")
+    except Exception as e:
+        logger.warning(f"[APP] Table creation skipped: {e}")
+
+    # Domain Events subscriber
     try:
         from app.domain_events import subscriber
         subscriber.start()
@@ -769,3 +815,55 @@ async def create_report_with_photos(
     db.add(report)
     db.commit()
     return {"success": True, "id": report.id, "message": "Отчёт отправлен"}
+
+@app.post("/api/tasks/{task_id}/apply")
+def apply_task_simple(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Записаться на задачу — работает для любого авторизованного пользователя."""
+    try:
+        task = db.query(models.Task).filter(models.Task.id == task_id).first()
+        if not task:
+            return {"success": False, "message": "Задача не найдена"}
+        if task.status != "open":
+            return {"success": False, "message": "Задача недоступна для записи"}
+
+        # BR-01: лимит
+        count = db.query(models.TaskApplication).filter(
+            models.TaskApplication.task_id == task_id,
+            models.TaskApplication.status.in_(["pending", "approved"]),
+        ).count()
+        if task.needed_people and count >= task.needed_people:
+            return {"success": False, "code": "BR-01",
+                    "message": "Достигнут лимит участников"}
+
+        # Уже записан?
+        existing = db.query(models.TaskApplication).filter(
+            models.TaskApplication.task_id == task_id,
+            models.TaskApplication.user_id == current_user.id,
+        ).first()
+        if existing:
+            return {"success": False, "message": "Вы уже подали заявку",
+                    "application_id": existing.id}
+
+        application = models.TaskApplication(
+            task_id=task_id,
+            user_id=current_user.id,
+            message="Хочу помочь!",
+            status="pending",
+        )
+        db.add(application)
+        db.commit()
+        db.refresh(application)
+
+        logger.info(f"[APPLY] user={current_user.email} task={task_id}")
+        return {
+            "success": True,
+            "message": "Заявка подана! Ожидайте одобрения куратора",
+            "application_id": application.id,
+        }
+    except Exception as e:
+        logger.error(f"[APPLY] error: {e}")
+        return {"success": False, "message": str(e)}
