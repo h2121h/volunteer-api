@@ -86,6 +86,8 @@ def mobile_dashboard(
                     "status":          t.status or "open",
                     "project":         projects.get(t.project_id, ""),
                     "already_applied": t.id in applied_ids,
+                    "difficulty":      t.difficulty if hasattr(t, "difficulty") else "medium",
+                    "category":        t.category if hasattr(t, "category") else "other",
                 }
                 for t in tasks_q
             ],
