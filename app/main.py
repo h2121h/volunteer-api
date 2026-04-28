@@ -409,6 +409,10 @@ def create_task(
             location=data.get("location"), needed_people=data.get("needed_people", 5),
             status="open"
         )
+        # Новые поля если есть в модели
+        for field in ("difficulty", "category", "lat", "lng"):
+            if data.get(field) and hasattr(task, field):
+                setattr(task, field, data[field])
         db.add(task)
         db.commit()
         db.refresh(task)
