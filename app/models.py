@@ -16,6 +16,15 @@ user_skills = Table(
 )
 
 
+team_members = Table(
+    'team_members',
+    Base.metadata,
+    Column('team_id', BigInteger, ForeignKey('teams.id',  ondelete='CASCADE')),
+    Column('user_id', BigInteger, ForeignKey('users.id',  ondelete='CASCADE')),
+    Column('joined_at', DateTime(timezone=True), server_default=func.now()),
+)
+
+
 class Role(Base):
     __tablename__ = 'roles'
 
@@ -123,7 +132,11 @@ class Task(Base):
     event_date = Column(Date, nullable=False)
     location = Column(String(150))
     needed_people = Column(SmallInteger, default=5)
-    status = Column(String(20), default='open')
+    status        = Column(String(20),  default='open')
+    difficulty    = Column(String(20),  default='medium')  # easy / medium / hard
+    category      = Column(String(50),  default='other')   # ecology / children / elderly / animals / other
+    lat           = Column(Numeric(9,6))
+    lng           = Column(Numeric(9,6))
 
     project = relationship('Project', back_populates='tasks')
     applications = relationship('TaskApplication',
@@ -219,3 +232,45 @@ class Skill(Base):
     name = Column(String(80), unique=True, nullable=False)
 
     users = relationship('User', secondary=user_skills, back_populates='skills')
+
+
+class Team(Base):
+    """Команда куратора — группа волонтёров для задачи."""
+    __tablename__ = 'teams'
+
+    id          = Column(BigInteger, primary_key=True, autoincrement=True)
+    name        = Column(String(100), nullable=False)
+    description = Column(Text)
+    task_id     = Column(BigInteger, ForeignKey('tasks.id', ondelete='SET NULL'))
+    max_size    = Column(SmallInteger)
+    created_by  = Column(BigInteger, ForeignKey('users.id'))
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+
+    creator = relationship('User', foreign_keys=[created_by])
+    task    = relationship('Task', foreign_keys=[task_id])
+    members = relationship(
+        'User',
+        secondary=team_members,
+        backref='teams',
+    )
+
+    __table_args__ = (
+        Index('idx_teams_creator', 'created_by'),
+    )
+
+
+class TeamMember(Base):
+    """Участник команды — для прямых запросов без secondary."""
+    __tablename__ = 'team_members'
+
+    team_id   = Column(BigInteger, ForeignKey('teams.id',  ondelete='CASCADE'), primary_key=True)
+    user_id   = Column(BigInteger, ForeignKey('users.id',  ondelete='CASCADE'), primary_key=True)
+    joined_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    team = relationship('Team',  foreign_keys=[team_id])
+    user = relationship('User',  foreign_keys=[user_id])
+
+    __table_args__ = (
+        Index('idx_team_members_team', 'team_id'),
+        {'extend_existing': True},
+    )
