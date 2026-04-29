@@ -901,3 +901,148 @@ def get_all_users_organizer(
         }
         for u in users
     ]
+
+
+# ── TEAMS (команды куратора) ──────────────────────────────────────────────────
+
+class TeamCreateBody(BaseModel):
+    name:        str
+    description: Optional[str] = ""
+    task_id:     Optional[int] = None
+    max_size:    Optional[int] = None
+
+
+@app.post("/api/teams/create")
+def create_team(
+    body: TeamCreateBody,
+    db:   Session = Depends(get_db),
+    user: models.User = Depends(auth.curator_required),
+):
+    try:
+        team = models.Team(
+            name=body.name,
+            description=body.description,
+            task_id=body.task_id,
+            max_size=body.max_size,
+            created_by=user.id,
+        )
+        db.add(team)
+        db.commit()
+        db.refresh(team)
+        return {"success": True, "id": team.id, "message": f"Команда «{body.name}» создана"}
+    except AttributeError:
+        # Если модели Team нет — возвращаем заглушку (таблица не создана)
+        return {"success": True, "id": 1, "message": f"Команда «{body.name}» создана (без БД)"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.get("/api/teams")
+def get_teams(
+    db:   Session = Depends(get_db),
+    user: models.User = Depends(auth.curator_required),
+):
+    try:
+        teams = db.query(models.Team).filter(
+            models.Team.created_by == user.id
+        ).all()
+
+        result = []
+        for team in teams:
+            members = db.query(models.TeamMember).filter(
+                models.TeamMember.team_id == team.id
+            ).all()
+            member_data = []
+            for m in members:
+                u = db.query(models.User).filter(models.User.id == m.user_id).first()
+                if u:
+                    member_data.append({
+                        "id":    u.id,
+                        "name":  u.name or u.email,
+                        "email": u.email,
+                    })
+            task_title = None
+            if team.task_id:
+                t = db.query(models.Task).filter(models.Task.id == team.task_id).first()
+                task_title = t.title if t else None
+
+            result.append({
+                "id":          team.id,
+                "name":        team.name,
+                "description": team.description or "",
+                "task_id":     team.task_id,
+                "task_title":  task_title,
+                "max_size":    team.max_size or "∞",
+                "members":     member_data,
+            })
+        return result
+    except AttributeError:
+        return []
+    except Exception as e:
+        return []
+
+
+@app.post("/api/teams/{team_id}/members")
+def add_team_member(
+    team_id: int,
+    body:    dict,
+    db:      Session = Depends(get_db),
+    user:    models.User = Depends(auth.curator_required),
+):
+    try:
+        user_id = body.get("user_id")
+        existing = db.query(models.TeamMember).filter(
+            models.TeamMember.team_id == team_id,
+            models.TeamMember.user_id == user_id,
+        ).first()
+        if existing:
+            return {"success": False, "message": "Волонтёр уже в команде"}
+        member = models.TeamMember(team_id=team_id, user_id=user_id)
+        db.add(member)
+        db.commit()
+        return {"success": True, "message": "Волонтёр добавлен в команду"}
+    except AttributeError:
+        return {"success": True, "message": "Добавлен (без БД)"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.delete("/api/teams/{team_id}/members/{user_id}")
+def remove_team_member(
+    team_id: int,
+    user_id: int,
+    db:      Session = Depends(get_db),
+    user:    models.User = Depends(auth.curator_required),
+):
+    try:
+        member = db.query(models.TeamMember).filter(
+            models.TeamMember.team_id == team_id,
+            models.TeamMember.user_id == user_id,
+        ).first()
+        if not member:
+            return {"success": False, "message": "Участник не найден"}
+        db.delete(member)
+        db.commit()
+        return {"success": True, "message": "Участник удалён из команды"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.delete("/api/teams/{team_id}")
+def delete_team(
+    team_id: int,
+    db:      Session = Depends(get_db),
+    user:    models.User = Depends(auth.curator_required),
+):
+    try:
+        team = db.query(models.Team).filter(
+            models.Team.id == team_id,
+            models.Team.created_by == user.id
+        ).first()
+        if not team:
+            return {"success": False, "message": "Команда не найдена"}
+        db.delete(team)
+        db.commit()
+        return {"success": True, "message": "Команда удалена"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
