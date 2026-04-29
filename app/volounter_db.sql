@@ -190,3 +190,23 @@ CREATE INDEX idx_assignments_user   ON task_assignments(user_id);
 CREATE INDEX idx_reports_assignment ON task_reports(assignment_id);
 CREATE INDEX idx_reports_user       ON task_reports(user_id);
 CREATE INDEX idx_events_type        ON domain_events(event_type, created_at DESC);
+-- ✅ НОВЫЕ: Команды куратора
+CREATE TABLE IF NOT EXISTS teams (
+    id          BIGSERIAL PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    description TEXT,
+    task_id     BIGINT REFERENCES tasks(id) ON DELETE SET NULL,
+    max_size    SMALLINT,
+    created_by  BIGINT REFERENCES users(id),
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+    team_id    BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+    user_id    BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    joined_at  TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (team_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_teams_creator ON teams(created_by);
+CREATE INDEX IF NOT EXISTS idx_team_members  ON team_members(team_id);
