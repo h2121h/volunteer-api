@@ -916,16 +916,39 @@ def join_team(
         if existing:
             return {"success": False, "message": "Вы уже в этой команде"}
 
+        # Создаём таблицу если нет
         db.execute(text("""
+            CREATE TABLE IF NOT EXISTS team_members (
+                team_id   BIGINT REFERENCES teams(id) ON DELETE CASCADE,
+                user_id   BIGINT REFERENCES users(id) ON DELETE CASCADE,
+                joined_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (team_id, user_id)
+            );
+        """))
+        db.commit()
+
+        result = db.execute(text("""
             INSERT INTO team_members (team_id, user_id)
             VALUES (:tid, :uid) ON CONFLICT DO NOTHING
+            RETURNING team_id
         """), {"tid": team_id, "uid": current_user.id})
         db.commit()
 
-        logger.info(f"[TEAM] join: user={current_user.email} team={team_id}")
+        inserted = result.fetchone()
+        logger.info(
+            f"[TEAM] join: user={current_user.email} team={team_id} "
+            f"inserted={bool(inserted)}"
+        )
+
+        if not inserted:
+            # Уже был в команде (ON CONFLICT)
+            return {"success": True, "message": "Вы уже в этой команде",
+                    "already_member": True}
+
         return {"success": True, "message": "Вы вступили в команду!"}
     except Exception as e:
         db.rollback()
+        logger.error(f"[TEAM] join error: {e}")
         return {"success": False, "message": str(e)}
 
 
