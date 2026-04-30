@@ -44,20 +44,31 @@ def on_application_created(payload: dict):
 def on_application_approved(payload: dict):
     """
     Реакция на ApplicationApproved:
-    - Ставим уведомление волонтёру в очередь
-    - Инвалидируем кэш волонтёра
+    4.3.3 Воркер обновляет Read Model через очередь:
+    - Уведомление волонтёру → Redis Queue → Worker
+    - Обновление кэша дашборда → Redis Queue → Worker
     """
     try:
         from task_queue import submit_task
+        user_id = payload.get("user_id")
+
+        # Уведомление в очередь
         submit_task(
             "send_approval_notification",
-            volunteer_id=payload.get("user_id"),
+            volunteer_id=user_id,
             task_title=payload.get("task_id", ""),
         )
-        # Инвалидация кэша
-        if REDIS_OK:
-            _redis.delete(f"volunteer:dashboard:{payload.get('user_id')}")
-        logger.info(f"[EVENT] ApplicationApproved → notification + cache invalidated: {payload}")
+
+        # 4.3.3 Обновление Read Model через воркер (асинхронно)
+        submit_task(
+            "update_volunteer_read_model",
+            user_id=user_id,
+        )
+
+        logger.info(
+            f"[EVENT] ApplicationApproved → "
+            f"notification + read_model update queued: user={user_id}"
+        )
     except Exception as e:
         logger.error(f"[EVENT] Handler error ApplicationApproved: {e}")
 
@@ -65,22 +76,44 @@ def on_application_approved(payload: dict):
 def on_report_approved(payload: dict):
     """
     Реакция на ReportApproved (BR-09):
-    - Инвалидируем кэш волонтёра чтобы баллы обновились
+    4.3.3 Воркер обновляет Read Model:
+    - Баллы начислены → кэш устарел → воркер пересчитывает
     """
     try:
-        if REDIS_OK:
-            user_id = payload.get("user_id")
-            _redis.delete(f"volunteer:dashboard:{user_id}")
-            logger.info(f"[EVENT] ReportApproved → cache invalidated user={user_id} "
-                        f"points={payload.get('points')}")
+        from task_queue import submit_task
+        user_id = payload.get("user_id")
+        points  = payload.get("points", 0)
+
+        # 4.3.3 Обновление Read Model через воркер
+        submit_task(
+            "update_volunteer_read_model",
+            user_id=user_id,
+        )
+
+        logger.info(
+            f"[EVENT] ReportApproved → "
+            f"read_model update queued: user={user_id} points={points}"
+        )
     except Exception as e:
         logger.error(f"[EVENT] Handler error ReportApproved: {e}")
 
 
 def on_report_rejected(payload: dict):
-    """Реакция на ReportRejected — логируем."""
-    logger.info(f"[EVENT] ReportRejected: user={payload.get('user_id')} "
-                f"reason={payload.get('reason')}")
+    """
+    Реакция на ReportRejected.
+    4.3.3 Обновляем Read Model — статус отчёта изменился.
+    """
+    try:
+        from task_queue import submit_task
+        user_id = payload.get("user_id")
+        logger.info(
+            f"[EVENT] ReportRejected: user={user_id} "
+            f"reason={payload.get('reason')}"
+        )
+        # Обновляем кэш чтобы отклонённый отчёт исчез из pending
+        submit_task("update_volunteer_read_model", user_id=user_id)
+    except Exception as e:
+        logger.error(f"[EVENT] Handler error ReportRejected: {e}")
 
 
 # ── Event Router ──────────────────────────────────────────────────────────────
