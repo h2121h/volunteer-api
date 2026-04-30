@@ -65,7 +65,7 @@ def get_db():
 # ── Существующие роутеры ──────────────────────────────────────────────────────
 from app.routers import (
     applications_router, auth_router, projects_router,
-    checkins, tasks_extra, reports_router, projects_api, admin, stats,
+    checkins, tasks_extra, reports_router, projects_api, admin, stats,event_reports_router,
 )
 app.include_router(applications_router.router)
 app.include_router(auth_router.router)
@@ -76,9 +76,10 @@ app.include_router(reports_router.router)
 app.include_router(projects_api.router)
 app.include_router(admin.router)
 app.include_router(stats.router)
-
+app.include_router(event_reports_router.router)
 # ── BFF роутеры ───────────────────────────────────────────────────────────────
 from app import bff_desktop, bff_web, bff_mobile
+
 app.include_router(bff_desktop.router)
 app.include_router(bff_web.router)
 try:
