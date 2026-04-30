@@ -65,7 +65,7 @@ def get_db():
 # ── Существующие роутеры ──────────────────────────────────────────────────────
 from app.routers import (
     applications_router, auth_router, projects_router,
-    checkins, tasks_extra, reports_router, projects_api, admin, stats,event_reports_router,
+    checkins, tasks_extra, reports_router, projects_api, admin, stats,
 )
 app.include_router(applications_router.router)
 app.include_router(auth_router.router)
@@ -76,10 +76,9 @@ app.include_router(reports_router.router)
 app.include_router(projects_api.router)
 app.include_router(admin.router)
 app.include_router(stats.router)
-app.include_router(event_reports_router.router)
+
 # ── BFF роутеры ───────────────────────────────────────────────────────────────
 from app import bff_desktop, bff_web, bff_mobile
-
 app.include_router(bff_desktop.router)
 app.include_router(bff_web.router)
 try:
@@ -105,6 +104,20 @@ except ImportError:
 try:
     from app.routers import teams_router
     app.include_router(teams_router.router)
+except ImportError:
+    pass
+
+# ── Event Reports роутер ───────────────────────────────────────────────────────
+try:
+    from app.routers import event_reports_router
+    app.include_router(event_reports_router.router)
+except ImportError:
+    pass
+
+# ── Event Reports роутер ──────────────────────────────────────────────────────
+try:
+    from app.routers import event_reports_router
+    app.include_router(event_reports_router.router)
 except ImportError:
     pass
 
@@ -1059,3 +1072,39 @@ def get_project_teams(
     except Exception as e:
         db.rollback()
         return []
+
+@app.patch("/tasks/{task_id}/complete")
+@app.post("/tasks/{task_id}/complete")
+def complete_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Волонтёр отмечает задачу выполненной."""
+    try:
+        task = db.query(models.Task).filter(models.Task.id == task_id).first()
+        if not task:
+            return {"success": False, "message": "Задача не найдена"}
+
+        # Проверяем что волонтёр назначен на задачу
+        assignment = db.query(models.TaskAssignment).filter(
+            models.TaskAssignment.task_id == task_id,
+            models.TaskAssignment.user_id == current_user.id,
+        ).first()
+        if not assignment:
+            # Также проверяем через заявку
+            application = db.query(models.TaskApplication).filter(
+                models.TaskApplication.task_id == task_id,
+                models.TaskApplication.user_id == current_user.id,
+                models.TaskApplication.status == "approved",
+            ).first()
+            if not application:
+                return {"success": False, "message": "Вы не назначены на эту задачу"}
+
+        task.status = "completed"
+        db.commit()
+        logger.info(f"[COMPLETE] user={current_user.email} task={task_id}")
+        return {"success": True, "message": "Задача отмечена выполненной"}
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "message": str(e)}
