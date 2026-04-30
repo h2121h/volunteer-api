@@ -86,6 +86,36 @@ class RejectReportCommand(BaseModel):
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 @router.post("/tasks/{task_id}/apply")
+# ── Cache Invalidation Helper (5.2.3) ────────────────────────────────────────
+
+def invalidate_cache(user_id: int = None, scope: str = "all"):
+    """
+    5.2.3 Инвалидация кэша после команд.
+    Вызывается после КАЖДОЙ команды которая меняет данные.
+    scope: "dashboard" | "tasks" | "all"
+    """
+    if not REDIS_OK:
+        return
+    try:
+        if scope in ("dashboard", "all") and user_id:
+            _redis.delete(f"volunteer:dashboard:{user_id}")
+            _redis.delete(f"curator:dashboard:{user_id}")
+
+        if scope in ("tasks", "all"):
+            # Инвалидируем все варианты кэша задач
+            for key in _redis.scan_iter("tasks:list:*"):
+                _redis.delete(key)
+
+        if scope == "all":
+            # Инвалидируем все дашборды (после глобальных изменений)
+            for key in _redis.scan_iter("volunteer:dashboard:*"):
+                _redis.delete(key)
+
+    except Exception as e:
+        import logging
+        logging.getLogger("cqrs").warning(f"Cache invalidation error: {e}")
+
+
 def cmd_apply_task(
     task_id: int,
     body:    ApplyTaskCommand,
@@ -146,6 +176,10 @@ def cmd_apply_task(
         "user_name":      user.name,
     })
 
+    # 5.2.3 Инвалидация кэша после команды apply
+    invalidate_cache(user_id=user.id, scope="dashboard")
+    invalidate_cache(scope="tasks")  # spots_left изменился
+
     return {"success": True, "application_id": app.id,
             "message": "Заявка подана! Ожидайте одобрения куратора"}
 
@@ -165,6 +199,9 @@ def cmd_approve_application(
 
     application.status = "approved"
     db.commit()
+
+    # 5.2.3 Инвалидация кэша после одобрения заявки
+    invalidate_cache(user_id=application.user_id, scope="dashboard")
 
     publish_event("ApplicationApproved", {
         "application_id": app_id,
@@ -193,6 +230,9 @@ def cmd_reject_application(
     application.status = "rejected"
     db.commit()
 
+    # 5.2.3 Инвалидация кэша после отклонения заявки
+    invalidate_cache(user_id=application.user_id, scope="dashboard")
+
     publish_event("ApplicationRejected", {
         "application_id": app_id,
         "user_id":        application.user_id,
@@ -218,13 +258,8 @@ def cmd_approve_report(
     report.is_approved = True
     db.commit()
 
-    # Инвалидируем кэш волонтёра (5.2.3)
-    if REDIS_OK:
-        cache_key = f"volunteer:dashboard:{report.user_id}"
-        try:
-            _redis.delete(cache_key)
-        except Exception:
-            pass
+    # 5.2.3 Инвалидация кэша после одобрения отчёта (баллы изменились)
+    invalidate_cache(user_id=report.user_id, scope="dashboard")
 
     points = int(float(report.hours or 0) * 10)
     publish_event("ReportApproved", {
@@ -251,6 +286,9 @@ def cmd_reject_report(
     ).first()
     if not report:
         raise HTTPException(404, "Отчёт не найден")
+
+    # 5.2.3 Инвалидация кэша после отклонения отчёта
+    invalidate_cache(user_id=report.user_id, scope="dashboard")
 
     publish_event("ReportRejected", {
         "report_id": report_id,
