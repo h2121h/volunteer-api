@@ -106,6 +106,7 @@ def mobile_dashboard(
                 "total_points":    total_points,
                 "pending_reports": pending_cnt,
             },
+            "my_teams": my_teams,
             "my_reports": [
                 {
                     "id":          r.id,
