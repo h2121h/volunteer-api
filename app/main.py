@@ -826,3 +826,235 @@ async def create_report_photos(
         is_approved=False))
     db.commit()
     return {"success": True, "message": "Отчёт отправлен"}
+
+# ── Team enrollment (волонтёр записывается в команду) ─────────────────────────
+
+@app.get("/api/teams/available")
+def get_available_teams(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Все доступные команды — волонтёр видит и может вступить."""
+    from sqlalchemy import text
+    try:
+        teams = db.execute(text("""
+            SELECT t.id, t.name, t.description, t.task_id, t.max_size,
+                   tk.title as task_title,
+                   u.name as curator_name,
+                   COUNT(tm.user_id) as members_count,
+                   MAX(CASE WHEN tm.user_id = :uid THEN 1 ELSE 0 END) as is_member
+            FROM teams t
+            LEFT JOIN tasks tk ON tk.id = t.task_id
+            LEFT JOIN users u  ON u.id  = t.created_by
+            LEFT JOIN team_members tm ON tm.team_id = t.id
+            GROUP BY t.id, t.name, t.description, t.task_id, t.max_size,
+                     tk.title, u.name
+            ORDER BY t.created_at DESC
+        """), {"uid": current_user.id}).fetchall()
+
+        return [{
+            "id":            row[0],
+            "name":          row[1] or "",
+            "description":   row[2] or "",
+            "task_id":       row[3],
+            "max_size":      row[4],
+            "task_title":    row[5] or "",
+            "curator_name":  row[6] or "",
+            "members_count": int(row[7] or 0),
+            "is_member":     bool(row[8]),
+            "spots_left":    (row[4] - int(row[7] or 0)) if row[4] else None,
+        } for row in teams]
+    except Exception as e:
+        db.rollback()
+        return []
+
+
+@app.post("/api/teams/{team_id}/join")
+def join_team(
+    team_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Волонтёр записывается в команду."""
+    from sqlalchemy import text
+    try:
+        # Проверяем лимит
+        team = db.execute(text(
+            "SELECT max_size FROM teams WHERE id = :tid"),
+            {"tid": team_id}).fetchone()
+        if not team:
+            return {"success": False, "message": "Команда не найдена"}
+
+        if team[0]:
+            count = db.execute(text(
+                "SELECT COUNT(*) FROM team_members WHERE team_id = :tid"),
+                {"tid": team_id}).fetchone()[0]
+            if count >= team[0]:
+                return {"success": False, "message": "Команда уже заполнена"}
+
+        # Уже в команде?
+        existing = db.execute(text(
+            "SELECT 1 FROM team_members WHERE team_id=:tid AND user_id=:uid"),
+            {"tid": team_id, "uid": current_user.id}).fetchone()
+        if existing:
+            return {"success": False, "message": "Вы уже в этой команде"}
+
+        db.execute(text("""
+            INSERT INTO team_members (team_id, user_id)
+            VALUES (:tid, :uid) ON CONFLICT DO NOTHING
+        """), {"tid": team_id, "uid": current_user.id})
+        db.commit()
+
+        logger.info(f"[TEAM] join: user={current_user.email} team={team_id}")
+        return {"success": True, "message": "Вы вступили в команду!"}
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "message": str(e)}
+
+
+@app.post("/api/teams/{team_id}/leave")
+def leave_team(
+    team_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Волонтёр выходит из команды."""
+    from sqlalchemy import text
+    try:
+        db.execute(text(
+            "DELETE FROM team_members WHERE team_id=:tid AND user_id=:uid"),
+            {"tid": team_id, "uid": current_user.id})
+        db.commit()
+        return {"success": True, "message": "Вы вышли из команды"}
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "message": str(e)}
+
+
+@app.get("/api/teams/my")
+def get_my_teams(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Команды в которых состоит волонтёр."""
+    from sqlalchemy import text
+    try:
+        teams = db.execute(text("""
+            SELECT t.id, t.name, t.description, tk.title, u.name,
+                   COUNT(tm2.user_id) as members_count
+            FROM team_members tm
+            JOIN teams t ON t.id = tm.team_id
+            LEFT JOIN tasks tk ON tk.id = t.task_id
+            LEFT JOIN users u  ON u.id  = t.created_by
+            LEFT JOIN team_members tm2 ON tm2.team_id = t.id
+            WHERE tm.user_id = :uid
+            GROUP BY t.id, t.name, t.description, tk.title, u.name
+        """), {"uid": current_user.id}).fetchall()
+        return [{
+            "id":           row[0],
+            "name":         row[1] or "",
+            "description":  row[2] or "",
+            "task_title":   row[3] or "",
+            "curator_name": row[4] or "",
+            "members_count": int(row[5] or 0),
+        } for row in teams]
+    except Exception as e:
+        db.rollback()
+        return []
+
+
+# ── Team → Project admission (куратор допускает команду к проекту) ────────────
+
+@app.post("/api/projects/{project_id}/teams/{team_id}/admit")
+def admit_team_to_project(
+    project_id: int,
+    team_id:    int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(organizer_required)
+):
+    """Организатор допускает команду к проекту — все участники получают заявки на задачи."""
+    from sqlalchemy import text
+    try:
+        # Получаем всех участников команды
+        members = db.execute(text(
+            "SELECT user_id FROM team_members WHERE team_id = :tid"),
+            {"tid": team_id}).fetchall()
+
+        if not members:
+            return {"success": False, "message": "В команде нет участников"}
+
+        # Получаем открытые задачи проекта
+        tasks = db.execute(text(
+            "SELECT id FROM tasks WHERE project_id=:pid AND status='open'"),
+            {"pid": project_id}).fetchall()
+
+        if not tasks:
+            return {"success": False, "message": "Нет открытых задач в проекте"}
+
+        added = 0
+        for member in members:
+            uid = member[0]
+            for task in tasks:
+                tid = task[0]
+                # Проверяем что ещё не записан
+                exists = db.execute(text("""
+                    SELECT 1 FROM task_applications
+                    WHERE task_id=:tid AND user_id=:uid
+                """), {"tid": tid, "uid": uid}).fetchone()
+                if not exists:
+                    db.execute(text("""
+                        INSERT INTO task_applications (task_id, user_id, message, status)
+                        VALUES (:tid, :uid, 'Допущен командой', 'approved')
+                    """), {"tid": tid, "uid": uid})
+                    # Сразу создаём назначение
+                    db.execute(text("""
+                        INSERT INTO task_assignments (task_id, user_id, assigned_by, status)
+                        VALUES (:tid, :uid, :by, 'assigned')
+                        ON CONFLICT DO NOTHING
+                    """), {"tid": tid, "uid": uid, "by": current_user.id})
+                    added += 1
+
+        db.commit()
+        logger.info(
+            f"[TEAM] admit: team={team_id} project={project_id} "
+            f"members={len(members)} assigned={added}"
+        )
+        return {
+            "success": True,
+            "message": f"Команда допущена! {len(members)} волонтёров назначено на {len(tasks)} задач",
+            "assigned": added,
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[TEAM] admit error: {e}")
+        return {"success": False, "message": str(e)}
+
+
+@app.get("/api/projects/{project_id}/teams")
+def get_project_teams(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """Команды допущенные к проекту (через task_assignments)."""
+    from sqlalchemy import text
+    try:
+        teams = db.execute(text("""
+            SELECT DISTINCT t.id, t.name, t.description,
+                            COUNT(tm.user_id) as members_count
+            FROM teams t
+            JOIN team_members tm ON tm.team_id = t.id
+            JOIN task_assignments ta ON ta.user_id = tm.user_id
+            JOIN tasks tk ON tk.id = ta.task_id
+            WHERE tk.project_id = :pid
+            GROUP BY t.id, t.name, t.description
+        """), {"pid": project_id}).fetchall()
+        return [{
+            "id":            row[0],
+            "name":          row[1],
+            "description":   row[2] or "",
+            "members_count": int(row[3] or 0),
+        } for row in teams]
+    except Exception as e:
+        db.rollback()
+        return []
