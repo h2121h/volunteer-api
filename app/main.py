@@ -875,7 +875,7 @@ def get_available_teams(
             "task_title":    row[5] or "",
             "curator_name":  row[6] or "",
             "members_count": int(row[7] or 0),
-            "is_member":     bool(row[8]),
+            "is_member":     int(row[8] or 0) > 0,   # cast int→bool
             "spots_left":    (row[4] - int(row[7] or 0)) if row[4] else None,
         } for row in teams]
     except Exception as e:
