@@ -18,14 +18,6 @@ import json
 from app import models, auth
 from app.database import get_db
 
-# 5.2.2 Метрики — трекинг горячих точек
-def _track(endpoint: str):
-    try:
-        from app.hotspot_metrics import track
-        track(endpoint)
-    except Exception:
-        pass
-
 try:
     import redis as redis_lib
     _redis = redis_lib.Redis(host='localhost', port=6379, db=0, decode_responses=True)
@@ -71,9 +63,6 @@ def query_volunteer_dashboard(
     Read-модель: задачи + мои заявки + статистика одним запросом.
     Кэшируется 30 сек в Redis.
     """
-    # 5.2.2 Трекинг — самый частый эндпоинт
-    _track("GET /query/volunteer/dashboard")
-
     cache_key = f"volunteer:dashboard:{user.id}"
     cached = _cache_get(cache_key)
     if cached:
@@ -291,9 +280,6 @@ def query_tasks(
     Тяжёлый GET-лист задач с фильтрами — raw SQL, кэш 60 сек.
     Горячая точка (5.2.1): вызывается при открытии списка.
     """
-    # 5.2.2 Трекинг — тяжёлый GET список с фильтрами
-    _track("GET /query/tasks")
-
     cache_key = f"tasks:list:{category}:{difficulty}:{lat}:{lng}:{radius}"
     cached = _cache_get(cache_key)
     if cached:
@@ -306,7 +292,10 @@ def query_tasks(
         where_clauses.append("t.category = :category")
         params["category"] = category
     if difficulty:
-        where_clauses.append("t.difficulty = :difficulty")
+        # COALESCE — если difficulty IS NULL считаем как 'medium'
+        where_clauses.append(
+            "COALESCE(t.difficulty, 'medium') = :difficulty"
+        )
         params["difficulty"] = difficulty
 
     where_str = " AND ".join(where_clauses)
