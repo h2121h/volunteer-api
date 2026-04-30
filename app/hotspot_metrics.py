@@ -27,6 +27,22 @@ except Exception:
 
 router = APIRouter(prefix="/metrics", tags=["Metrics & Hotspots"])
 
+
+def track(endpoint: str):
+    """
+    5.2.2 Трекинг вызовов — вызывается из каждого эндпоинта.
+    Инкрементирует счётчик в Redis sorted set.
+    """
+    if not REDIS_OK:
+        return
+    try:
+        safe = endpoint.replace("/", ":").replace("{", "").replace("}", "")
+        _redis.incr(f"metrics:calls:{safe}")
+        _redis.expire(f"metrics:calls:{safe}", 86400)
+        _redis.zincrby("metrics:hotspots", 1, endpoint)
+    except Exception:
+        pass
+
 # Горячие точки — описание для документации
 HOTSPOTS = {
     "GET /query/volunteer/dashboard": {
