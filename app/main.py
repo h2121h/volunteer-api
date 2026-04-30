@@ -434,9 +434,12 @@ def create_task(data: dict, db: Session = Depends(get_db),
             location=data.get("location"), needed_people=data.get("needed_people", 5),
             status="open"
         )
-        for field in ("difficulty", "category", "lat", "lng"):
-            if data.get(field) and hasattr(task, field):
-                setattr(task, field, data[field])
+        # Всегда сохраняем difficulty и category (даже если не переданы — ставим дефолт)
+        for field, default in [("difficulty", "medium"), ("category", "other"),
+                                ("lat", None), ("lng", None)]:
+            val = data.get(field) or default
+            if val and hasattr(task, field):
+                setattr(task, field, val)
         db.add(task)
         db.commit()
         db.refresh(task)
