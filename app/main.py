@@ -160,6 +160,13 @@ async def startup():
                 CREATE INDEX IF NOT EXISTS idx_rep_asgn ON task_reports(assignment_id);
                 CREATE INDEX IF NOT EXISTS idx_rep_user ON task_reports(user_id);
 
+                -- BR-09: добавляем points если ещё нет (идемпотентно)
+                ALTER TABLE task_reports
+                    ADD COLUMN IF NOT EXISTS points INTEGER NOT NULL DEFAULT 0;
+                UPDATE task_reports
+                    SET points = FLOOR(hours * 10)::int
+                    WHERE is_approved = TRUE AND points = 0 AND hours IS NOT NULL;
+
                 CREATE TABLE IF NOT EXISTS volunteer_documents (
                     id          BIGSERIAL PRIMARY KEY,
                     user_id     BIGINT REFERENCES users(id) ON DELETE CASCADE,
