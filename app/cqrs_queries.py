@@ -83,7 +83,7 @@ def query_volunteer_dashboard(
             p.title AS project_title,
             a.status AS my_application_status,
             a.id     AS my_application_id,
-            COUNT(a2.id) FILTER (WHERE a2.status IN ('created','approved')) AS applicants_count
+            COUNT(a2.id) FILTER (WHERE a2.status IN ('created','active')) AS applicants_count
         FROM tasks t
         LEFT JOIN projects p ON p.id = t.project_id
         LEFT JOIN task_applications a  ON a.task_id = t.id AND a.user_id = :uid
@@ -100,7 +100,8 @@ def query_volunteer_dashboard(
         SELECT
             COUNT(r.id) FILTER (WHERE r.is_approved = true)         AS approved_reports,
             COUNT(r.id) FILTER (WHERE r.is_approved = false)        AS pending_reports,
-            COALESCE(SUM(r.hours) FILTER (WHERE r.is_approved = true), 0) AS total_hours
+            COALESCE(SUM(r.hours) FILTER (WHERE r.is_approved = true), 0) AS total_hours,
+            COALESCE(SUM(r.points) FILTER (WHERE r.is_approved = true), 0) AS total_points
         FROM task_reports r
         WHERE r.user_id = :uid
     """)
@@ -132,7 +133,7 @@ def query_volunteer_dashboard(
     ]
 
     total_hours  = float(stats_row[2] or 0) if stats_row else 0.0
-    total_points = int(total_hours * 10)
+    total_points = int(stats_row[3] or 0) if stats_row else 0
 
     result = {
         "user": {
@@ -206,8 +207,12 @@ def query_curator_dashboard(
             r.submitted_at::text,
             (r.submitted_at + interval '72 hours')::text AS auto_approve_at
         FROM task_reports r
-        JOIN users u ON u.id = r.user_id
+        JOIN users u               ON u.id = r.user_id
+        JOIN task_assignments asgn ON asgn.id = r.assignment_id
+        JOIN tasks t               ON t.id = asgn.task_id
+        JOIN projects pr           ON pr.id = t.project_id
         WHERE r.is_approved = false
+          AND pr.created_by = :uid
         ORDER BY r.submitted_at ASC
         LIMIT 50
     """)
@@ -292,10 +297,7 @@ def query_tasks(
         where_clauses.append("t.category = :category")
         params["category"] = category
     if difficulty:
-        # COALESCE — если difficulty IS NULL считаем как 'medium'
-        where_clauses.append(
-            "COALESCE(t.difficulty, 'medium') = :difficulty"
-        )
+        where_clauses.append("t.difficulty = :difficulty")
         params["difficulty"] = difficulty
 
     where_str = " AND ".join(where_clauses)
