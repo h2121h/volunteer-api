@@ -8,7 +8,7 @@ BFF (Backend for Frontend) — Web клиент (HTML/JS, куратор).
 - WebSocket-ready данные о явке
 """
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, contains_eager
 from sqlalchemy import func
 from datetime import datetime, timedelta
 from app import models, auth
@@ -31,7 +31,7 @@ def web_dashboard(
     """
     # Заявки только от своих проектов (ownership)
     applications = db.query(models.TaskApplication).options(
-        joinedload(models.TaskApplication.task),
+        contains_eager(models.TaskApplication.task),  # join уже есть ниже — reuse его
         joinedload(models.TaskApplication.user),
     ).join(models.Task).join(models.Project).filter(
         models.Project.created_by == current_user.id,
