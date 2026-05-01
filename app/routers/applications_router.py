@@ -38,24 +38,26 @@ def get_applications_for_curator(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(curator_required)
 ):
-    # Куратор видит ВСЕ заявки — не фильтруем по создателю проекта
-    # (проекты создают организаторы, а одобряют заявки кураторы)
     applications = db.query(models.TaskApplication).options(
         joinedload(models.TaskApplication.task),
         joinedload(models.TaskApplication.user)
+    ).join(
+        models.Task
+    ).join(
+        models.Project
+    ).filter(
+        models.Project.created_by == current_user.id
     ).all()
 
     return [
         {
-            "id":         a.id,
-            "task_id":    a.task_id,
-            "task_title": a.task.title if a.task else "—",
-            "user_id":    a.user_id,
-            "user_name":  a.user.name if a.user else "—",
-            "user_email": a.user.email if a.user else "—",
-            "message":    a.message,
-            "status":     a.status or "pending",
-            "applied_at": str(a.applied_at) if a.applied_at else None,
+            "id": a.id,
+            "task_id": a.task_id,
+            "task_title": a.task.title if a.task else "Неизвестно",
+            "user_id": a.user_id,
+            "user_name": a.user.name if a.user else "Неизвестно",
+            "message": a.message,
+            "applied_at": a.applied_at
         }
         for a in applications
     ]
@@ -67,7 +69,7 @@ def approve(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(curator_required),
 ):
-    application = change_application_status(db, app_id, ApplicationStatus.APPROVED, current_user)
+    application = change_application_status(db, app_id, ApplicationStatus.ACTIVE, current_user)
 
     logger.info(f"[APPROVE] curator={current_user.email} application={app_id}")
 
@@ -102,7 +104,7 @@ def reject(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(curator_required),
 ):
-    change_application_status(db, app_id, ApplicationStatus.REJECTED, current_user)
+    change_application_status(db, app_id, ApplicationStatus.CANCELLED, current_user)
 
     logger.warning(f"[REJECT] curator={current_user.email} application={app_id}")
 
