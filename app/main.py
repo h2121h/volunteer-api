@@ -334,7 +334,17 @@ def login(request: Request, data: dict, db: Session = Depends(get_db)):
         return {"success": False, "message": str(e)}
 
 @app.get("/api/users/me")
-def get_me(current_user: models.User = Depends(get_current_active_user)):
+def get_me(current_user: models.User = Depends(get_current_active_user),
+           db: Session = Depends(get_db)):
+    # BR-09: суммируем баллы из одобренных отчётов
+    approved_reports = db.query(models.TaskReport).filter(
+        models.TaskReport.user_id == current_user.id,
+        models.TaskReport.is_approved == True,
+    ).all()
+    total_points = sum(
+        (r.points if hasattr(r, 'points') and r.points else int(float(r.hours or 0) * 10))
+        for r in approved_reports
+    )
     return {
         "id": current_user.id, "email": current_user.email,
         "name": current_user.name,
@@ -342,6 +352,7 @@ def get_me(current_user: models.User = Depends(get_current_active_user)):
         "role": current_user.role.code, "role_name": current_user.role.name,
         "is_active": current_user.is_active,
         "created_at": current_user.created_at,
+        "points": total_points,
     }
 
 @app.get("/api/users")
@@ -555,15 +566,21 @@ def get_pending_reports(db: Session = Depends(get_db),
 
 @app.post("/api/reports/{report_id}/approve")
 def approve_report(report_id: int, db: Session = Depends(get_db),
-                   current_user: models.User = Depends(curator_required)):
+                   current_user: models.User = Depends(curator_required),
+                   points: int = 0):
     try:
         r = db.query(models.TaskReport).filter(
             models.TaskReport.id == report_id).first()
         if not r:
             return {"success": False, "message": "Отчёт не найден"}
         r.is_approved = True
+        # BR-09: куратор задаёт баллы; если не передал — считаем hours * 10
+        if points > 0:
+            r.points = points
+        elif r.points == 0:
+            r.points = int(float(r.hours or 0) * 10)
         db.commit()
-        return {"success": True, "message": "Отчёт одобрен (BR-09: баллы начислены)"}
+        return {"success": True, "message": f"Отчёт одобрен, начислено {r.points} баллов", "points": r.points}
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -589,7 +606,8 @@ def get_my_reports(db: Session = Depends(get_db),
             models.TaskReport.user_id == current_user.id).all()
         return [{
             "id": r.id, "hours": float(r.hours or 0), "comment": r.comment,
-            "is_approved": r.is_approved, "submitted_at": r.submitted_at
+            "is_approved": r.is_approved, "submitted_at": r.submitted_at,
+            "points": r.points if hasattr(r, 'points') and r.points else int(float(r.hours or 0) * 10) if r.is_approved else 0,
         } for r in reports]
     except Exception:
         return []
