@@ -20,7 +20,7 @@ def mobile_dashboard(
             models.Task.status == "open"
         ).all()
 
-        # 2. Проекты
+        # 2. Проекты (для открытых задач)
         project_ids = list({t.project_id for t in tasks_q if t.project_id})
         projects = {}
         if project_ids:
@@ -35,6 +35,26 @@ def mobile_dashboard(
         ).all()
         applied_ids = {a.task_id for a in my_apps}
 
+        # 3a. Догружаем исторические задачи (закрытые/прошедшие) по заявкам
+        #     чтобы в истории заголовки отображались корректно
+        open_task_ids = {t.id for t in tasks_q}
+        hist_task_ids = {a.task_id for a in my_apps} - open_task_ids
+        hist_tasks = []
+        if hist_task_ids:
+            hist_tasks = db.query(models.Task).filter(
+                models.Task.id.in_(hist_task_ids)
+            ).all()
+            for t in hist_tasks:
+                if t.project_id and t.project_id not in projects:
+                    p = db.query(models.Project).filter(
+                        models.Project.id == t.project_id
+                    ).first()
+                    if p:
+                        projects[t.project_id] = p.title
+
+        # Общий map всех задач (открытые + исторические)
+        all_tasks_map = {t.id: t for t in tasks_q + hist_tasks}
+
         # 4. Отчёты — таблицы могут не существовать
         #    ВАЖНО: rollback после ошибки — иначе вся сессия в ABORTED
         my_reports   = []
@@ -48,20 +68,26 @@ def mobile_dashboard(
             ).all()
             if my_assignments:
                 asgn_ids   = [a.id for a in my_assignments]
+                # Строим map assignment_id -> task_id
+                asgn_task_map = {a.id: a.task_id for a in my_assignments}
                 my_reports = db.query(models.TaskReport).filter(
                     models.TaskReport.assignment_id.in_(asgn_ids)
                 ).all()
                 for r in my_reports:
                     h = float(r.hours or 0)
+                    pts = r.points if hasattr(r, 'points') and r.points else int(h * 10)
                     if r.is_approved:
                         total_hours  += h
-                        total_points += int(h * 10)
+                        total_points += pts
                     else:
                         pending_cnt += 1
+            else:
+                asgn_task_map = {}
         except Exception as e:
             logger.warning(f"[BFF_MOBILE] reports skipped (table missing?): {e}")
             db.rollback()   # ← сброс ABORTED транзакции
             my_reports = []
+            asgn_task_map = {}
 
         logger.info(
             f"[BFF_MOBILE] OK user={current_user.email} "
@@ -91,6 +117,17 @@ def mobile_dashboard(
                 }
                 for t in tasks_q
             ],
+            "history_tasks": [
+                {
+                    "id":         t.id,
+                    "title":      t.title or "",
+                    "event_date": str(t.event_date) if t.event_date else None,
+                    "location":   t.location or "",
+                    "status":     t.status or "closed",
+                    "project":    projects.get(t.project_id, ""),
+                }
+                for t in hist_tasks
+            ],
             "my_applications": [
                 {
                     "id":         a.id,
@@ -110,11 +147,14 @@ def mobile_dashboard(
             "my_reports": [
                 {
                     "id":          r.id,
+                    "task_id":     asgn_task_map.get(r.assignment_id),
+                    "task_title":  (all_tasks_map[asgn_task_map[r.assignment_id]].title if asgn_task_map.get(r.assignment_id) and asgn_task_map[r.assignment_id] in all_tasks_map else None),
                     "hours":       float(r.hours or 0),
                     "comment":     r.comment or "",
                     "is_approved": bool(r.is_approved),
                     "status":      "approved" if r.is_approved else "pending",
-                    "points":      int(float(r.hours or 0) * 10) if r.is_approved else 0,
+                    "points":      (r.points if hasattr(r, 'points') and r.points else int(float(r.hours or 0) * 10)) if r.is_approved else 0,
+                    "submitted_at": str(r.submitted_at) if r.submitted_at else None,
                 }
                 for r in my_reports
             ],
