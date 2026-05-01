@@ -141,7 +141,7 @@ def mobile_apply(
         # BR-01
         count = db.query(models.TaskApplication).filter(
             models.TaskApplication.task_id == task_id,
-            models.TaskApplication.status.in_(["pending", "approved"]),
+            models.TaskApplication.status.in_(["created", "active"]),
         ).count()
         if count >= (task.needed_people or 999):
             return {"success": False, "code": "BR-01",
@@ -153,7 +153,7 @@ def mobile_apply(
                 models.Task, models.TaskApplication.task_id == models.Task.id
             ).filter(
                 models.TaskApplication.user_id == current_user.id,
-                models.TaskApplication.status.in_(["pending", "approved"]),
+                models.TaskApplication.status.in_(["created", "active"]),
                 models.Task.event_date == task.event_date,
                 models.Task.id != task_id,
             ).first()
@@ -172,7 +172,7 @@ def mobile_apply(
             task_id=task_id,
             user_id=current_user.id,
             message="Хочу помочь!",
-            status="pending",
+            status="created",
         )
         db.add(app)
         db.commit()
