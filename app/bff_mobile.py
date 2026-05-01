@@ -94,6 +94,18 @@ def mobile_dashboard(
             f"tasks={len(tasks_q)} apps={len(my_apps)} pts={total_points}"
         )
 
+        # Команды волонтёра (через many-to-many team_members)
+        try:
+            my_teams = [
+                {"id": t.id, "name": t.name}
+                for t in db.query(models.Team).join(
+                    models.team_members,
+                    models.Team.id == models.team_members.c.team_id
+                ).filter(models.team_members.c.user_id == user_id).all()
+            ]
+        except Exception:
+            my_teams = []
+
         return {
             "user": {
                 "id":    user_id,
