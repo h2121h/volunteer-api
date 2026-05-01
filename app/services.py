@@ -15,17 +15,21 @@ except ImportError:
 
 
 class ApplicationStatus:
-    PENDING   = "pending"
-    APPROVED  = "approved"
-    REJECTED  = "rejected"
-    CANCELLED = "cancelled"
+    CREATED   = "created"    # волонтёр подал заявку
+    ACTIVE    = "active"     # куратор одобрил
+    CANCELLED = "cancelled"  # отклонено или отменено
+    COMPLETED = "completed"  # задача выполнена
 
 
 ALLOWED_TRANSITIONS: dict[str, list[str]] = {
-    ApplicationStatus.PENDING:   [ApplicationStatus.APPROVED, ApplicationStatus.REJECTED],
-    ApplicationStatus.APPROVED:  [ApplicationStatus.CANCELLED],
-    ApplicationStatus.REJECTED:  [],
+    ApplicationStatus.CREATED:   [ApplicationStatus.ACTIVE, ApplicationStatus.CANCELLED],
+    ApplicationStatus.ACTIVE:    [ApplicationStatus.COMPLETED, ApplicationStatus.CANCELLED],
+    ApplicationStatus.COMPLETED: [],
     ApplicationStatus.CANCELLED: [],
+    # совместимость со старыми данными в БД
+    "pending":   [ApplicationStatus.ACTIVE, ApplicationStatus.CANCELLED],
+    "approved":  [ApplicationStatus.COMPLETED, ApplicationStatus.CANCELLED],
+    "rejected":  [],
 }
 
 
