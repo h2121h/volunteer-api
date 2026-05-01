@@ -487,7 +487,7 @@ def edit_task(task_id: int, data: dict, db: Session = Depends(get_db),
 def get_pending_apps(db: Session = Depends(get_db),
                      current_user: models.User = Depends(curator_required)):
     apps = db.query(models.TaskApplication).filter(
-        models.TaskApplication.status == "pending").all()
+        models.TaskApplication.status == "created").all()
     return [{
         "id": a.id, "task_id": a.task_id,
         "task_title": a.task.title if a.task else "—",
@@ -505,7 +505,7 @@ def approve_app(app_id: int, db: Session = Depends(get_db),
             models.TaskApplication.id == app_id).first()
         if not a:
             return {"success": False, "message": "Заявка не найдена"}
-        a.status = "approved"
+        a.status = "active"  # правильный статус по ApplicationStatus enum
         assignment = models.TaskAssignment(
             task_id=a.task_id, user_id=a.user_id,
             assigned_by=current_user.id, status="assigned"
