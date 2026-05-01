@@ -44,7 +44,7 @@ def apply_to_task(
     # BR-01: проверяем лимит
     current_count = db.query(models.TaskApplication).filter(
         models.TaskApplication.task_id == task_id,
-        models.TaskApplication.status.in_(["created", "approved"]),
+        models.TaskApplication.status.in_(["created", "active"]),
     ).count()
     if current_count >= task.needed_people:
         raise HTTPException(400, "BR-01: достигнут лимит участников")
@@ -52,7 +52,7 @@ def apply_to_task(
     # BR-05: проверяем конфликт расписания
     conflict = db.query(models.TaskApplication).join(models.Task).filter(
         models.TaskApplication.user_id == current_user.id,
-        models.TaskApplication.status.in_(["created", "approved"]),
+        models.TaskApplication.status.in_(["created", "active"]),
         models.Task.event_date == task.event_date,
         models.Task.id != task_id,
     ).first()
