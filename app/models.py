@@ -157,7 +157,7 @@ class TaskApplication(Base):
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     task_id = Column(BigInteger, ForeignKey('tasks.id', ondelete='CASCADE'))
     user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'))
-    status = Column(String(20), default='pending')
+    status = Column(String(20), default='created')
     message = Column(Text)
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
 
