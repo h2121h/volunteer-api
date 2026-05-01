@@ -38,26 +38,24 @@ def get_applications_for_curator(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(curator_required)
 ):
+    # Куратор видит ВСЕ заявки — не фильтруем по создателю проекта
+    # (проекты создают организаторы, а одобряют заявки кураторы)
     applications = db.query(models.TaskApplication).options(
         joinedload(models.TaskApplication.task),
         joinedload(models.TaskApplication.user)
-    ).join(
-        models.Task
-    ).join(
-        models.Project
-    ).filter(
-        models.Project.created_by == current_user.id
     ).all()
 
     return [
         {
-            "id": a.id,
-            "task_id": a.task_id,
-            "task_title": a.task.title if a.task else "Неизвестно",
-            "user_id": a.user_id,
-            "user_name": a.user.name if a.user else "Неизвестно",
-            "message": a.message,
-            "applied_at": a.applied_at
+            "id":         a.id,
+            "task_id":    a.task_id,
+            "task_title": a.task.title if a.task else "—",
+            "user_id":    a.user_id,
+            "user_name":  a.user.name if a.user else "—",
+            "user_email": a.user.email if a.user else "—",
+            "message":    a.message,
+            "status":     a.status or "pending",
+            "applied_at": str(a.applied_at) if a.applied_at else None,
         }
         for a in applications
     ]
