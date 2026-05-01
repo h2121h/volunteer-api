@@ -33,7 +33,7 @@ def mobile_dashboard(
         my_apps = db.query(models.TaskApplication).filter(
             models.TaskApplication.user_id == user_id
         ).all()
-        applied_ids = {a.task_id for a in my_apps}
+        applied_ids = {a.task_id for a in my_apps if a.status in ("created", "active")}
 
         # 3a. Догружаем исторические задачи (закрытые/прошедшие) по заявкам
         #     чтобы в истории заголовки отображались корректно
@@ -216,6 +216,7 @@ def mobile_apply(
         existing = db.query(models.TaskApplication).filter(
             models.TaskApplication.task_id == task_id,
             models.TaskApplication.user_id == current_user.id,
+            models.TaskApplication.status.in_(["created", "active"]),
         ).first()
         if existing:
             return {"success": False, "message": "Вы уже подали заявку"}
