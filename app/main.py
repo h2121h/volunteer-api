@@ -321,16 +321,20 @@ def login(request: Request, data: dict, db: Session = Depends(get_db)):
         if not user:
             return {"success": False, "message": "Неверный email или пароль"}
         token = create_access_token(data={"sub": user.email})
+        role_code = user.role.code if user.role else "volunteer"
+        role_name = user.role.name if user.role else "Волонтёр"
         return {
             "success": True, "message": "Вход выполнен успешно",
             "token": token, "access_token": token,
             "user": {
                 "id": user.id, "email": user.email,
                 "name": user.name or user.email.split('@')[0],
-                "role": user.role.code, "role_name": user.role.name,
+                "role": role_code, "role_name": role_name,
+                "city": getattr(user, 'city', None),
             }
         }
     except Exception as e:
+        logger.error(f"[LOGIN] Exception: {type(e).__name__}: {e}")
         return {"success": False, "message": str(e)}
 
 @app.get("/api/users/me")
