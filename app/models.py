@@ -202,6 +202,7 @@ class TaskReport(Base):
     photo_url = Column(Text)
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
     is_approved = Column(Boolean, default=False)
+    points = Column(Integer, default=0)  # баллы, начисленные куратором при одобрении
 
     assignment = relationship('TaskAssignment', back_populates='reports')
     user = relationship('User', foreign_keys=[user_id], back_populates='reports')
