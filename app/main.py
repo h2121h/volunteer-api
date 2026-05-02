@@ -114,13 +114,6 @@ try:
 except ImportError:
     pass
 
-# ── Event Reports роутер ──────────────────────────────────────────────────────
-try:
-    from app.routers import event_reports_router
-    app.include_router(event_reports_router.router)
-except ImportError:
-    pass
-
 # ── Metrics ───────────────────────────────────────────────────────────────────
 try:
     from app import hotspot_metrics
@@ -352,7 +345,6 @@ def login(request: Request, data: dict, db: Session = Depends(get_db)):
 @app.get("/api/users/me")
 def get_me(current_user: models.User = Depends(get_current_active_user),
            db: Session = Depends(get_db)):
-    # BR-09: суммируем баллы из одобренных отчётов
     approved_reports = db.query(models.TaskReport).filter(
         models.TaskReport.user_id == current_user.id,
         models.TaskReport.is_approved == True,
@@ -428,7 +420,7 @@ def apply_task(task_id: int, db: Session = Depends(get_db),
 @app.get("/api/my-tasks")
 def get_my_tasks(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.volunteer_required),
+    current_user: models.User = Depends(volunteer_required),  # ИСПРАВЛЕНО: было auth.volunteer_required
 ):
     """Задачи волонтёра — только те где есть TaskAssignment (куратор одобрил)."""
     assignments = db.query(models.TaskAssignment).filter(
@@ -442,13 +434,13 @@ def get_my_tasks(
         if not task:
             continue
         result.append({
-            "id":           task.id,
-            "title":        task.title or "",
-            "location":     task.location or "",
-            "event_date":   str(task.event_date) if task.event_date else "",
-            "status":       task.status or "open",
-            "needed_people": task.needed_people,
-            "assignment_id": a.id,
+            "id":                task.id,
+            "title":             task.title or "",
+            "location":          task.location or "",
+            "event_date":        str(task.event_date) if task.event_date else "",
+            "status":            task.status or "open",
+            "needed_people":     task.needed_people,
+            "assignment_id":     a.id,
             "assignment_status": a.status,
         })
     return result
@@ -490,7 +482,6 @@ def create_task(data: dict, db: Session = Depends(get_db),
             location=data.get("location"), needed_people=data.get("needed_people", 5),
             status="open"
         )
-        # Всегда сохраняем difficulty и category (даже если не переданы — ставим дефолт)
         for field, default in [("difficulty", "medium"), ("category", "other"),
                                 ("lat", None), ("lng", None)]:
             val = data.get(field) or default
@@ -550,7 +541,7 @@ def approve_app(app_id: int, db: Session = Depends(get_db),
             models.TaskApplication.id == app_id).first()
         if not a:
             return {"success": False, "message": "Заявка не найдена"}
-        a.status = "active"  # правильный статус по ApplicationStatus enum
+        a.status = "active"
         assignment = models.TaskAssignment(
             task_id=a.task_id, user_id=a.user_id,
             assigned_by=current_user.id, status="assigned"
@@ -619,7 +610,6 @@ def approve_report(report_id: int, db: Session = Depends(get_db),
         if not r:
             return {"success": False, "message": "Отчёт не найден"}
         r.is_approved = True
-        # BR-09: куратор задаёт баллы; если не передал — считаем hours * 10
         if points > 0:
             r.points = points
         elif r.points == 0:
@@ -941,7 +931,7 @@ def get_available_teams(
             "task_title":    row[5] or "",
             "curator_name":  row[6] or "",
             "members_count": int(row[7] or 0),
-            "is_member":     int(row[8] or 0) > 0,   # cast int→bool
+            "is_member":     int(row[8] or 0) > 0,
             "spots_left":    (row[4] - int(row[7] or 0)) if row[4] else None,
         } for row in teams]
     except Exception as e:
@@ -958,7 +948,6 @@ def join_team(
     """Волонтёр записывается в команду."""
     from sqlalchemy import text
     try:
-        # Проверяем лимит
         team = db.execute(text(
             "SELECT max_size FROM teams WHERE id = :tid"),
             {"tid": team_id}).fetchone()
@@ -972,14 +961,12 @@ def join_team(
             if count >= team[0]:
                 return {"success": False, "message": "Команда уже заполнена"}
 
-        # Уже в команде?
         existing = db.execute(text(
             "SELECT 1 FROM team_members WHERE team_id=:tid AND user_id=:uid"),
             {"tid": team_id, "uid": current_user.id}).fetchone()
         if existing:
             return {"success": False, "message": "Вы уже в этой команде"}
 
-        # Создаём таблицу если нет
         db.execute(text("""
             CREATE TABLE IF NOT EXISTS team_members (
                 team_id   BIGINT REFERENCES teams(id) ON DELETE CASCADE,
@@ -1004,7 +991,6 @@ def join_team(
         )
 
         if not inserted:
-            # Уже был в команде (ON CONFLICT)
             return {"success": True, "message": "Вы уже в этой команде",
                     "already_member": True}
 
@@ -1078,7 +1064,6 @@ def admit_team_to_project(
     """Организатор допускает команду к проекту — все участники получают заявки на задачи."""
     from sqlalchemy import text
     try:
-        # Получаем всех участников команды
         members = db.execute(text(
             "SELECT user_id FROM team_members WHERE team_id = :tid"),
             {"tid": team_id}).fetchall()
@@ -1086,7 +1071,6 @@ def admit_team_to_project(
         if not members:
             return {"success": False, "message": "В команде нет участников"}
 
-        # Получаем открытые задачи проекта
         tasks = db.execute(text(
             "SELECT id FROM tasks WHERE project_id=:pid AND status='open'"),
             {"pid": project_id}).fetchall()
@@ -1099,7 +1083,6 @@ def admit_team_to_project(
             uid = member[0]
             for task in tasks:
                 tid = task[0]
-                # Проверяем что ещё не записан
                 exists = db.execute(text("""
                     SELECT 1 FROM task_applications
                     WHERE task_id=:tid AND user_id=:uid
@@ -1109,7 +1092,6 @@ def admit_team_to_project(
                         INSERT INTO task_applications (task_id, user_id, message, status)
                         VALUES (:tid, :uid, 'Допущен командой', 'approved')
                     """), {"tid": tid, "uid": uid})
-                    # Сразу создаём назначение
                     db.execute(text("""
                         INSERT INTO task_assignments (task_id, user_id, assigned_by, status)
                         VALUES (:tid, :uid, :by, 'assigned')
@@ -1175,13 +1157,11 @@ def complete_task(
         if not task:
             return {"success": False, "message": "Задача не найдена"}
 
-        # Проверяем что волонтёр назначен на задачу
         assignment = db.query(models.TaskAssignment).filter(
             models.TaskAssignment.task_id == task_id,
             models.TaskAssignment.user_id == current_user.id,
         ).first()
         if not assignment:
-            # Также проверяем через заявку
             application = db.query(models.TaskApplication).filter(
                 models.TaskApplication.task_id == task_id,
                 models.TaskApplication.user_id == current_user.id,
