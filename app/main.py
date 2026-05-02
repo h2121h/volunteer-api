@@ -639,11 +639,38 @@ def get_my_reports(db: Session = Depends(get_db),
     try:
         reports = db.query(models.TaskReport).filter(
             models.TaskReport.user_id == current_user.id).all()
-        return [{
-            "id": r.id, "hours": float(r.hours or 0), "comment": r.comment,
-            "is_approved": r.is_approved, "submitted_at": r.submitted_at,
-            "points": r.points if hasattr(r, 'points') and r.points else int(float(r.hours or 0) * 10) if r.is_approved else 0,
-        } for r in reports]
+
+        # Строим map assignment_id → task для получения task_id и task_title
+        asgn_ids = [r.assignment_id for r in reports if r.assignment_id]
+        asgn_task_map = {}
+        if asgn_ids:
+            assignments = db.query(models.TaskAssignment).filter(
+                models.TaskAssignment.id.in_(asgn_ids)
+            ).all()
+            task_ids = [a.task_id for a in assignments]
+            tasks = {t.id: t for t in db.query(models.Task).filter(
+                models.Task.id.in_(task_ids)
+            ).all()}
+            for a in assignments:
+                asgn_task_map[a.id] = tasks.get(a.task_id)
+
+        result = []
+        for r in reports:
+            task = asgn_task_map.get(r.assignment_id)
+            points = r.points if hasattr(r, 'points') and r.points else (
+                int(float(r.hours or 0) * 10) if r.is_approved else 0
+            )
+            result.append({
+                "id":           r.id,
+                "task_id":      task.id if task else None,
+                "task_title":   task.title if task else None,
+                "hours":        float(r.hours or 0),
+                "comment":      r.comment,
+                "is_approved":  r.is_approved,
+                "submitted_at": r.submitted_at,
+                "points":       points,
+            })
+        return result
     except Exception:
         return []
 
