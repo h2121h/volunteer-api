@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import models
@@ -38,26 +38,25 @@ def get_applications_for_curator(
         db: Session = Depends(get_db),
         current_user: models.User = Depends(curator_required)
 ):
+    # ИСПРАВЛЕНО: убран фильтр .filter(models.Project.created_by == current_user.id)
+    # Куратор должен видеть ВСЕ заявки, а не только по своим проектам —
+    # проекты создаёт организатор, поэтому старый фильтр давал пустой список.
     applications = db.query(models.TaskApplication).options(
         joinedload(models.TaskApplication.task),
         joinedload(models.TaskApplication.user)
-    ).join(
-        models.Task
-    ).join(
-        models.Project
-    ).filter(
-        models.Project.created_by == current_user.id
     ).all()
 
     return [
         {
             "id": a.id,
             "task_id": a.task_id,
-            "task_title": a.task.title if a.task else "Неизвестно",
+            "task_title": a.task.title if a.task else "—",
             "user_id": a.user_id,
-            "user_name": a.user.name if a.user else "Неизвестно",
+            "user_name": a.user.name if a.user else "—",
+            "user_email": a.user.email if a.user else "—",  # добавлено — фронтенд отображает
             "message": a.message,
-            "applied_at": a.applied_at
+            "status": a.status,  # добавлено — фронтенд фильтрует по статусу
+            "applied_at": str(a.applied_at) if a.applied_at else None,
         }
         for a in applications
     ]
@@ -73,7 +72,6 @@ def approve(
 
     logger.info(f"[APPROVE] curator={current_user.email} application={app_id}")
 
-    # Отправка уведомления через Celery (асинхронно, через очередь)
     task_id = send_notification(
         application.user_id,
         f"Ваша заявка на задачу одобрена!"
@@ -94,7 +92,7 @@ def approve(
     return {
         "success": True,
         "message": "Заявка одобрена, волонтёр назначен",
-        "notification_task_id": task_id  # Возвращаем ID задачи для отслеживания
+        "notification_task_id": task_id
     }
 
 
@@ -125,9 +123,6 @@ def cancel(
 def get_task_status(
         task_id: str,
 ):
-    """
-    Проверка статуса фоновой задачи (для отслеживания)
-    """
     from celery.result import AsyncResult
     from app.celery_worker import celery_app
 
