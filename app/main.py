@@ -263,12 +263,17 @@ def get_projects(db: Session = Depends(get_db)):
             for p in projects]
 
 @app.get("/api/tasks")
-def get_tasks(db: Session = Depends(get_db), status: Optional[str] = None,
-              project_id: Optional[int] = None):
-    query = db.query(models.Task)
-    if status:     query = query.filter(models.Task.status == status)
-    if project_id: query = query.filter(models.Task.project_id == project_id)
-    tasks = query.all()
+def get_tasks(db: Session = Depends(get_db),
+              status:     Optional[str] = None,
+              project_id: Optional[int] = None,
+              difficulty: Optional[str] = None,
+              category:   Optional[str] = None):
+    q = db.query(models.Task)
+    if status:     q = q.filter(models.Task.status == status)
+    if project_id: q = q.filter(models.Task.project_id == project_id)
+    if difficulty: q = q.filter(models.Task.difficulty == difficulty)
+    if category:   q = q.filter(models.Task.category == category)
+    tasks = q.all()
     return [{
         "id": t.id, "title": t.title, "description": t.description,
         "location": t.location, "event_date": str(t.event_date) if t.event_date else None,
