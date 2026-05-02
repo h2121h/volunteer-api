@@ -29,14 +29,13 @@ def web_dashboard(
     Один запрос — куратор получает всё для своей панели.
     Ownership: только данные своих проектов и команды.
     """
-    # Заявки только от своих проектов (ownership)
+    # Все заявки со статусом created (без фильтра по проекту — задача может быть без проекта)
     applications = db.query(models.TaskApplication).options(
-        contains_eager(models.TaskApplication.task),  # join уже есть ниже — reuse его
+        joinedload(models.TaskApplication.task),
         joinedload(models.TaskApplication.user),
-    ).join(models.Task).join(models.Project).filter(
-        models.Project.created_by == current_user.id,
-        models.TaskApplication.status == "created",
-    ).all()
+    ).filter(
+        models.TaskApplication.status.in_(["created", "pending"]),
+    ).order_by(models.TaskApplication.applied_at.desc()).all()
 
     # Отчёты на проверке (только своих волонтёров)
     # BR-03: автоодобрение через 72ч
