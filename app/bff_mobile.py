@@ -159,8 +159,19 @@ def mobile_dashboard(
             "my_reports": [
                 {
                     "id":          r.id,
+                    # task_id: сначала ищем через assignment, fallback — user_id совпадает
                     "task_id":     asgn_task_map.get(r.assignment_id),
-                    "task_title":  (all_tasks_map[asgn_task_map[r.assignment_id]].title if asgn_task_map.get(r.assignment_id) and asgn_task_map[r.assignment_id] in all_tasks_map else None),
+                    "task_title":  (
+                        all_tasks_map[asgn_task_map[r.assignment_id]].title
+                        if asgn_task_map.get(r.assignment_id)
+                        and asgn_task_map[r.assignment_id] in all_tasks_map
+                        else (
+                            # Fallback: ищем задачу напрямую через assignment
+                            all_tasks_map.get(asgn_task_map.get(r.assignment_id), {}).title
+                            if hasattr(all_tasks_map.get(asgn_task_map.get(r.assignment_id), {}), 'title')
+                            else f"Отчёт #{r.id}"
+                        )
+                    ),
                     "hours":       float(r.hours or 0),
                     "comment":     r.comment or "",
                     "is_approved": bool(r.is_approved),
