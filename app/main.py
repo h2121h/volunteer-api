@@ -420,6 +420,35 @@ def apply_task(task_id: int, db: Session = Depends(get_db),
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+@app.get("/api/my-tasks")
+def get_my_tasks(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.volunteer_required),
+):
+    """Задачи волонтёра — только те где есть TaskAssignment (куратор одобрил)."""
+    assignments = db.query(models.TaskAssignment).filter(
+        models.TaskAssignment.user_id == current_user.id,
+        models.TaskAssignment.status.in_(["assigned", "in_progress"]),
+    ).all()
+
+    result = []
+    for a in assignments:
+        task = db.query(models.Task).filter(models.Task.id == a.task_id).first()
+        if not task:
+            continue
+        result.append({
+            "id":           task.id,
+            "title":        task.title or "",
+            "location":     task.location or "",
+            "event_date":   str(task.event_date) if task.event_date else "",
+            "status":       task.status or "open",
+            "needed_people": task.needed_people,
+            "assignment_id": a.id,
+            "assignment_status": a.status,
+        })
+    return result
+
+
 @app.get("/api/my-applications")
 def get_my_applications(db: Session = Depends(get_db),
                         current_user: models.User = Depends(volunteer_required)):
