@@ -97,7 +97,7 @@ def mobile_dashboard(
         # Команды волонтёра (через many-to-many team_members)
         try:
             my_teams = [
-                {"id": t.id, "name": t.name}
+                {"id": t.id, "name": t.name, "task_id": t.task_id}
                 for t in db.query(models.Team).join(
                     models.team_members,
                     models.Team.id == models.team_members.c.team_id
